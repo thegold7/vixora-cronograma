@@ -311,64 +311,99 @@ export async function regenerarCronogramaVisual(
   const map: Record<string, EntradaCronograma> = {};
   for (const e of entries) map[`${e.tecnico_id}|${e.fecha}`] = e;
 
-  const days: Date[] = [];
-  if (month) {
-    const last = new Date(year, month, 0).getDate();
-    for (let d = 1; d <= last; d++) days.push(new Date(year, month - 1, d));
-  } else {
-    for (let m = 0; m < 12; m++) {
-      const last = new Date(year, m + 1, 0).getDate();
-      for (let d = 1; d <= last; d++) days.push(new Date(year, m, d));
-    }
-  }
+  // Determinar qué meses generar
+  const mesesAGenerar: number[] = month ? [month] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
   const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-  const header = [
-    "N°",
-    "Nombre",
-    "Cargo",
-    ...days.map((d) => `${d.getDate()} ${DOW_ES[d.getDay()]}`),
-  ];
-  const rows: string[][] = [header];
+  const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
-  for (let i = 0; i < tecnicos.length; i++) {
-    const t = tecnicos[i];
-    const row: string[] = [String(i + 1), t.nombre, t.cargo];
-    for (const d of days) {
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      const e = map[`${t.id}|${iso}`];
-      if (!e) {
-        row.push("");
-        continue;
-      }
-      let cellText = e.actividad;
-      if (e.ots_asignadas && e.ots_asignadas !== "—") {
-        const codigos = e.ots_asignadas
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        for (const cod of codigos) {
-          const ot = otMap[cod];
-          if (ot) {
-            cellText += `\n${cod} - ${ot.cliente}${ot.sede ? " " + ot.sede : ""}`;
-          } else {
-            cellText += `\n${cod}`;
-          }
-        }
-      } else if (e.detalle && e.detalle !== "—") {
-        cellText += `\n${e.detalle}`;
-      }
-      row.push(cellText);
+  const rows: string[][] = [];
+  let totalColumnas = 0;
+
+  for (const mes of mesesAGenerar) {
+    // Generar fila separadora de mes: "ENERO 2026" ocupando varias columnas
+    const last = new Date(year, mes, 0).getDate();
+    totalColumnas = Math.max(totalColumnas, 3 + last);
+
+    // Fila separadora: primera celda con el nombre del mes, resto vacío
+    const filaMes: string[] = [`${String(mes).padStart(2, "0")}-${MESES_ES[mes - 1].toUpperCase()}-${year}`];
+    for (let i = 1; i < 3 + last; i++) filaMes.push("");
+    rows.push(filaMes);
+
+    // Header de días del mes
+    const headerDias: string[] = ["N°", "Nombre", "Cargo"];
+    for (let d = 1; d <= last; d++) {
+      const date = new Date(year, mes - 1, d);
+      headerDias.push(`${d} ${DOW_ES[date.getDay()]}`);
     }
-    rows.push(row);
+    rows.push(headerDias);
+
+    // Filas de técnicos
+    for (let i = 0; i < tecnicos.length; i++) {
+      const t = tecnicos[i];
+      const row: string[] = [String(i + 1), t.nombre, t.cargo];
+      for (let d = 1; d <= last; d++) {
+        const iso = `${year}-${String(mes).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        const e = map[`${t.id}|${iso}`];
+        if (!e) {
+          row.push("");
+          continue;
+        }
+        let cellText = e.actividad;
+        if (e.ots_asignadas && e.ots_asignadas !== "—") {
+          const codigos = e.ots_asignadas
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+          for (const cod of codigos) {
+            const ot = otMap[cod];
+            if (ot) {
+              // Buscar el detalle específico de esta OT en e.detalle
+              // Formato detalle: "código - detalle\n..."
+              let detalleOt = "";
+              if (e.detalle && e.detalle !== "—") {
+                const lineas = e.detalle.split("\n");
+                for (const linea of lineas) {
+                  const match = linea.match(/^(\S+)\s*-\s*(.+)$/);
+                  if (match && match[1] === cod) {
+                    detalleOt = match[2];
+                    break;
+                  }
+                }
+              }
+              if (detalleOt) {
+                cellText += `\n${cod} - ${detalleOt}`;
+              } else {
+                const desc = `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim();
+                cellText += `\n${cod} - ${desc}`;
+              }
+            } else {
+              cellText += `\n${cod}`;
+            }
+          }
+        } else if (e.detalle && e.detalle !== "—") {
+          cellText += `\n${e.detalle}`;
+        }
+        row.push(cellText);
+      }
+      rows.push(row);
+    }
+
+    // Fila vacía entre meses (excepto después del último)
+    if (mesesAGenerar.indexOf(mes) < mesesAGenerar.length - 1) {
+      const filaVacia: string[] = [];
+      for (let i = 0; i < 3 + last; i++) filaVacia.push("");
+      rows.push(filaVacia);
+    }
   }
 
+  // Limpiar y escribir
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
     range: "Cronograma_Visual!A1:ZZ",
   });
 
-  const lastCol = colToLetter(3 + days.length);
+  const lastCol = colToLetter(totalColumnas);
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(),
@@ -377,9 +412,8 @@ export async function regenerarCronogramaVisual(
     requestBody: { values: rows },
   });
 
-  return { ok: true, filas: rows.length, columnas: header.length };
+  return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
-
 function colToLetter(col: number): string {
   let letter = "";
   while (col > 0) {
