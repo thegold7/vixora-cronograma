@@ -2,10 +2,8 @@
 
 import { useStore } from "@/lib/store";
 import { VIXORA_COLORS } from "@/lib/types";
-import { Calendar, Users, Settings as SettingsIcon, BarChart3, Eye, EyeOff, RefreshCw, Save, LogIn, LogOut, Pencil } from "lucide-react";
+import { Calendar, Users, BarChart3, Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil } from "lucide-react";
 import { useState } from "react";
-
-const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
 interface Props {
   onNavigate: (seccion: "cronograma" | "tecnicos" | "estadisticas") => void;
@@ -18,7 +16,7 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
 
   const handleRegenerar = async () => {
     setRegenerando(true);
-    await regenerarVisual(fechaActual.getFullYear(), fechaActual.getMonth() + 1);
+    await regenerarVisual(fechaActual.getFullYear());
     setRegenerando(false);
   };
 
@@ -27,7 +25,6 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
       className="w-16 lg:w-56 shrink-0 flex flex-col text-white"
       style={{ backgroundColor: VIXORA_COLORS.dark }}
     >
-      {/* Logo arriba */}
       <div className="p-3 border-b border-white/10 flex items-center gap-2">
         <div
           className="px-2 py-1 rounded font-bold text-sm flex items-center"
@@ -38,7 +35,6 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
         <span className="hidden lg:block text-xs text-white/70">Cronograma</span>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 p-2 space-y-1">
         <SidebarButton
           icon={<Calendar size={18} />}
@@ -60,7 +56,6 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
         />
       </nav>
 
-      {/* Acciones rápidas */}
       {seccionActual === "cronograma" && (
         <div className="p-2 space-y-1 border-t border-white/10">
           <SidebarButton
@@ -72,7 +67,7 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
           {modoAcceso === "editor" && (
             <SidebarButton
               icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />}
-              label={regenerando ? "Actualizando..." : "Actualizar Excel visual"}
+              label={regenerando ? "Actualizando..." : "Actualizar Excel visual (365 días)"}
               active={false}
               onClick={handleRegenerar}
             />
@@ -80,7 +75,6 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
         </div>
       )}
 
-      {/* Auth abajo */}
       <div className="p-2 border-t border-white/10">
         {modoAcceso === "editor" ? (
           <>
