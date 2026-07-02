@@ -58,13 +58,13 @@ export function VixoraApp() {
   }
 
   return (
-    <div className="min-h-screen flex bg-gray-50">
+    <div className="h-screen flex bg-gray-50 overflow-hidden">
       <SidebarLeft onNavigate={setSeccion} seccionActual={seccion} />
 
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {seccion === "cronograma" && <Topbar />}
 
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 overflow-auto">
             {seccion === "cronograma" && (
               <div className="p-4">
@@ -82,7 +82,7 @@ export function VixoraApp() {
                 )}
                 {modoAcceso === "editor" && (
                   <p className="mt-3 text-xs text-gray-400 italic">
-                    💡 Click en celda para editar · Arrastra mouse para seleccionar rango · Shift+Click para extender · Arrastra OTs desde el panel derecho
+                    💡 Click en celda para editar · Arrastra mouse horizontalmente para seleccionar rango · Shift+Click para extender · Arrastra OTs desde el panel derecho
                   </p>
                 )}
               </div>
