@@ -77,10 +77,11 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
   }
 
   return (
-    <aside className="w-64 shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col">
-      <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between">
+    <aside className="w-64 shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col h-full">
+      {/* Header con botón de cerrar */}
+      <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
         <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-          Gestión de Asignaciones
+          Gestión Asign.
         </div>
         <button
           onClick={toggleSidebarDerecha}
@@ -91,27 +92,26 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         </button>
       </div>
 
+      {/* Rango seleccionado visible */}
       {seleccionRango.inicio && seleccionRango.fin && (
-        <div className="p-3 bg-pink-50 border-b border-pink-200">
-          <div className="text-[10px] font-bold text-pink-700 uppercase mb-1">
-            📅 Rango seleccionado
+        <div className="p-2 bg-pink-50 border-b border-pink-200 shrink-0">
+          <div className="text-[10px] font-bold text-pink-700 uppercase">
+            📅 {formatearFechaCorta(seleccionRango.inicio)} → {formatearFechaCorta(seleccionRango.fin)}
           </div>
-          <div className="text-xs text-pink-900 font-semibold">
-            {formatearFechaCorta(seleccionRango.inicio)} → {formatearFechaCorta(seleccionRango.fin)}
-          </div>
-          <div className="text-[10px] text-pink-700 mt-1">
+          <div className="text-[10px] text-pink-700 mt-0.5">
             {otSeleccionadas.length} OT(s) seleccionada(s)
           </div>
           <button
             onClick={() => setSeleccionRango({ inicio: null, fin: null })}
-            className="mt-1 text-[10px] text-pink-700 hover:underline"
+            className="mt-0.5 text-[10px] text-pink-700 hover:underline"
           >
             ✕ Limpiar rango
           </button>
         </div>
       )}
 
-      <div className="p-2 border-b border-gray-200 bg-white">
+      {/* Búsqueda */}
+      <div className="p-2 border-b border-gray-200 bg-white shrink-0">
         <div className="relative">
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
@@ -124,7 +124,8 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         </div>
       </div>
 
-      <div className="p-2 border-b border-gray-200 bg-white flex gap-1">
+      {/* Filtros estado */}
+      <div className="p-2 border-b border-gray-200 bg-white flex gap-1 shrink-0">
         <FilterChip
           active={filtroEstado === "todos"}
           onClick={() => setFiltroEstado("todos")}
@@ -145,20 +146,21 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         />
       </div>
 
-      <div className="px-2 py-2 border-b border-gray-200 bg-white flex items-center justify-between">
+      {/* Seleccionar todas + agregar nueva */}
+      <div className="px-2 py-1.5 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
         <button
           onClick={seleccionarTodas}
           className="flex items-center gap-1 text-[11px] text-gray-600 hover:text-pink-600"
         >
           <CheckSquare size={12} />
-          {todasSeleccionadas ? "Quitar todas" : "Todas"}
+          {todasSeleccionadas ? "Quitar" : "Todas"}
         </button>
         {otSeleccionadas.length > 0 && (
           <button
             onClick={limpiarOTsSeleccionadas}
             className="text-[11px] text-gray-400 hover:text-red-500"
           >
-            Limpiar ({otSeleccionadas.length})
+            ({otSeleccionadas.length})
           </button>
         )}
         {modoAcceso === "editor" && (
@@ -173,8 +175,9 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         )}
       </div>
 
+      {/* Form nueva OT */}
       {mostrarFormNueva && modoAcceso === "editor" && (
-        <div className="p-2 border-b border-gray-200 bg-pink-50 space-y-1">
+        <div className="p-2 border-b border-gray-200 bg-pink-50 space-y-1 shrink-0">
           <input
             type="text"
             value={nuevaOt.codigo}
@@ -224,7 +227,8 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      {/* Lista de OTs - con scroll interno limitado */}
+      <div className="flex-1 overflow-y-auto min-h-0">
         {otsFiltradas.length === 0 ? (
           <div className="p-4 text-center text-xs text-gray-400">
             No hay OTs que coincidan
@@ -310,8 +314,9 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         )}
       </div>
 
-      <div className="p-2 border-t border-gray-200 bg-white text-[10px] text-gray-400 text-center">
-        {otsFiltradas.length} OT(s) mostradas
+      {/* Footer informativo */}
+      <div className="p-1.5 border-t border-gray-200 bg-white text-[10px] text-gray-400 text-center shrink-0">
+        {otsFiltradas.length} OT(s)
       </div>
     </aside>
   );
