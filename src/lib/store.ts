@@ -1,9 +1,5 @@
 /**
  * Store Zustand para la app VIXORA.
- * Maneja:
- *   - datos cargados del backend
- *   - estado UI (vista, fecha seleccionada, modal activo, etc.)
- *   - acciones de edición
  */
 "use client";
 
@@ -19,11 +15,10 @@ import type {
 } from "@/lib/types";
 
 export interface CronogramaMap {
-  [key: string]: EntradaCronograma; // key = `${tecnico_id}|${fecha}`
+  [key: string]: EntradaCronograma;
 }
 
 interface AppState {
-  // datos
   tecnicos: Tecnico[];
   ots: OT[];
   actividades: Actividad[];
@@ -32,21 +27,20 @@ interface AppState {
   cargando: boolean;
   error: string | null;
 
-  // UI
   vista: VistaCalendario;
-  fechaActual: Date; // mes/semana visible
+  fechaActual: Date;
   seleccionRango: { inicio: string | null; fin: string | null };
   mostrarDetalles: boolean;
+  sidebarDerechaVisible: boolean;
   modalEdicion: {
     abierto: boolean;
     tecnico_id: string | null;
     fecha: string | null;
   } | null;
-  otSeleccionadas: string[]; // códigos OT seleccionadas en panel derecho
+  otSeleccionadas: string[];
   loginModalAbierto: boolean;
   toast: { mensaje: string; tipo: "ok" | "error" | "info" } | null;
 
-  // acciones
   cargarDatos: () => Promise<void>;
   setVista: (v: VistaCalendario) => void;
   setFechaActual: (d: Date) => void;
@@ -55,6 +49,7 @@ interface AppState {
   avanzaSemana: () => void;
   retrocedeSemana: () => void;
   toggleMostrarDetalles: () => void;
+  toggleSidebarDerecha: () => void;
   abrirModalEdicion: (tecnico_id: string, fecha: string) => void;
   cerrarModalEdicion: () => void;
   toggleOTSeleccionada: (codigo: string) => void;
@@ -77,9 +72,10 @@ interface AppState {
   borrarEntrada: (tecnico_id: string, fecha: string) => Promise<boolean>;
   toggleTecnico: (tecnico_id: string, activo: boolean) => Promise<boolean>;
   regenerarVisual: (year: number, month?: number) => Promise<boolean>;
+  cambiarEstadoOt: (codigo: string, nuevoEstado: string) => Promise<boolean>;
+  agregarOt: (codigo: string, cliente: string, sede: string, estado: string) => Promise<boolean>;
 }
 
-const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 export function formatFechaISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -97,6 +93,7 @@ export const useStore = create<AppState>((set, get) => ({
   fechaActual: new Date(),
   seleccionRango: { inicio: null, fin: null },
   mostrarDetalles: true,
+  sidebarDerechaVisible: true,
   modalEdicion: null,
   otSeleccionadas: [],
   loginModalAbierto: false,
@@ -152,6 +149,9 @@ export const useStore = create<AppState>((set, get) => ({
   toggleMostrarDetalles: () =>
     set((s) => ({ mostrarDetalles: !s.mostrarDetalles })),
 
+  toggleSidebarDerecha: () =>
+    set((s) => ({ sidebarDerechaVisible: !s.sidebarDerechaVisible })),
+
   abrirModalEdicion: (tecnico_id, fecha) =>
     set({ modalEdicion: { abierto: true, tecnico_id, fecha } }),
   cerrarModalEdicion: () => set({ modalEdicion: null }),
@@ -206,7 +206,6 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      // refrescar datos
       await get().cargarDatos();
       get().showToast("Entrada guardada", "ok");
       return true;
@@ -273,8 +272,11 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
+      const esCompleto = !month;
       get().showToast(
-        `Excel visual actualizado: ${json.data.filas} filas × ${json.data.columnas} columnas`,
+        esCompleto
+          ? `Excel visual actualizado (365 días): ${json.data.filas} filas × ${json.data.columnas} columnas`
+          : `Excel visual actualizado: ${json.data.filas} filas × ${json.data.columnas} columnas`,
         "ok"
       );
       return true;
@@ -286,9 +288,50 @@ export const useStore = create<AppState>((set, get) => ({
       return false;
     }
   },
+
+  cambiarEstadoOt: async (codigo, nuevoEstado) => {
+    try {
+      const res = await fetch("/api/ot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "cambiar_estado", codigo, nuevoEstado }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatos();
+      get().showToast(`OT ${codigo} → ${nuevoEstado}`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al cambiar estado OT",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  agregarOt: async (codigo, cliente, sede, estado) => {
+    try {
+      const res = await fetch("/api/ot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar", codigo, cliente, sede, estado }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatos();
+      get().showToast(`OT ${codigo} agregada`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al agregar OT",
+        "error"
+      );
+      return false;
+    }
+  },
 }));
 
-// helpers exportados
 export function getColorActividad(
   actividades: Actividad[],
   nombre: string
@@ -296,5 +339,3 @@ export function getColorActividad(
   const a = actividades.find((x) => x.nombre === nombre);
   return a ? a.color : null;
 }
-
-export { DOW_ES };
