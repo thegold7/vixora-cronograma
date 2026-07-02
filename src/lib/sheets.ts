@@ -2,6 +2,10 @@
  * Cliente de Google Sheets para VIXORA Cronograma.
  * Usa googleapis con la Service Account.
  * Solo se ejecuta en el servidor (server-side).
+ *
+ * IMPORTANTE: las variables de entorno se leen de forma diferida (lazy)
+ * para evitar errores durante el build de Vercel (donde las env vars
+ * de runtime no están disponibles).
  */
 import { google, type sheets_v4 } from "googleapis";
 import type {
@@ -11,21 +15,34 @@ import type {
   EntradaCronograma,
 } from "./types";
 
-const SHEET_ID = process.env.GOOGLE_SHEETS_ID!;
-const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
-const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, "\n");
-
 let client: sheets_v4.Sheets | null = null;
 
 function getClient(): sheets_v4.Sheets {
   if (client) return client;
+  const sheetId = process.env.GOOGLE_SHEETS_ID;
+  const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY ?? "";
+  if (!sheetId || !clientEmail || !privateKeyRaw) {
+    throw new Error(
+      "Faltan variables de entorno de Google Sheets. Configura GOOGLE_SHEETS_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL y GOOGLE_PRIVATE_KEY en Vercel."
+    );
+  }
+  const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
   const jwt = new google.auth.JWT({
-    email: CLIENT_EMAIL,
-    key: PRIVATE_KEY,
+    email: clientEmail,
+    key: privateKey,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   client = google.sheets({ version: "v4", auth: jwt });
   return client;
+}
+
+function getSheetId(): string {
+  const id = process.env.GOOGLE_SHEETS_ID;
+  if (!id) {
+    throw new Error("Falta GOOGLE_SHEETS_ID en variables de entorno");
+  }
+  return id;
 }
 
 /** Lee todos los valores de una hoja, saltando el header */
@@ -35,7 +52,7 @@ async function readSheet<T>(
 ): Promise<T[]> {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
+    spreadsheetId: getSheetId(),
     range: `${sheetName}!A2:Z`,
   });
   const rows = (res.data.values ?? []) as string[][];
@@ -95,7 +112,7 @@ export async function getActividades(): Promise<Actividad[]> {
 }
 
 // ============================================================
-// LECTURA — CRONOGRAMA (hoja oculta _Cronograma_Datos)
+// LECTURA — CRONOGRAMA
 // ============================================================
 export async function getCronograma(): Promise<EntradaCronograma[]> {
   return readSheet("_Cronograma_Datos", (r) => ({
@@ -111,10 +128,6 @@ export async function getCronograma(): Promise<EntradaCronograma[]> {
   }));
 }
 
-/**
- * Devuelve el cronograma en formato mapa indexado por `${tecnico_id}|${fecha}`
- * para acceso O(1) desde la UI.
- */
 export async function getCronogramaMap(): Promise<
   Record<string, EntradaCronograma>
 > {
@@ -132,7 +145,7 @@ export async function getCronogramaMap(): Promise<
 async function getNextId(): Promise<string> {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
+    spreadsheetId: getSheetId(),
     range: "_Cronograma_Datos!A2:A",
   });
   const rows = (res.data.values ?? []) as string[][];
@@ -145,11 +158,6 @@ async function getNextId(): Promise<string> {
   return `C${String(max + 1).padStart(4, "0")}`;
 }
 
-/**
- * Crea o actualiza una entrada del cronograma.
- * Si ya existe una entrada para (tecnico_id, fecha), la actualiza in-place.
- * Si no existe, agrega una nueva fila al final.
- */
 export async function upsertEntradaCronograma(
   params: {
     tecnico_id: string;
@@ -176,9 +184,8 @@ export async function upsertEntradaCronograma(
   ).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
   if (idx >= 0) {
-    // update in-place
     const existing = all[idx];
-    const rowNumber = idx + 2; // +1 header, +1 index 0
+    const rowNumber = idx + 2;
     const values = [
       [
         existing.id,
@@ -193,14 +200,13 @@ export async function upsertEntradaCronograma(
       ],
     ];
     await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
+      spreadsheetId: getSheetId(),
       range: `_Cronograma_Datos!A${rowNumber}:I${rowNumber}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });
     return { ok: true, id: existing.id };
   } else {
-    // append
     const newId = await getNextId();
     const values = [
       [
@@ -216,7 +222,7 @@ export async function upsertEntradaCronograma(
       ],
     ];
     await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
+      spreadsheetId: getSheetId(),
       range: "_Cronograma_Datos!A:I",
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
@@ -226,10 +232,6 @@ export async function upsertEntradaCronograma(
   }
 }
 
-/**
- * Elimina una entrada del cronograma (cuando se borra una celda).
- * Estrategia: reescribimos toda la hoja sin la fila eliminada.
- */
 export async function deleteEntradaCronograma(
   tecnico_id: string,
   fecha: string
@@ -240,7 +242,6 @@ export async function deleteEntradaCronograma(
     (e) => !(e.tecnico_id === tecnico_id && e.fecha === fecha)
   );
 
-  // Reescribir toda la hoja
   const header = [
     ["id", "tecnico_id", "fecha", "actividad", "ots_asignadas", "detalle", "notas", "modificado_por", "fecha_modif"],
   ];
@@ -257,12 +258,12 @@ export async function deleteEntradaCronograma(
   ]);
 
   await sheets.spreadsheets.values.clear({
-    spreadsheetId: SHEET_ID,
+    spreadsheetId: getSheetId(),
     range: "_Cronograma_Datos!A1:Z",
   });
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
+    spreadsheetId: getSheetId(),
     range: "_Cronograma_Datos!A1",
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [...header, ...rows] },
@@ -282,10 +283,10 @@ export async function toggleTecnicoActivo(
   const all = await getTecnicos();
   const idx = all.findIndex((t) => t.id === tecnicoId);
   if (idx < 0) throw new Error(`Técnico ${tecnicoId} no encontrado`);
-  const rowNumber = idx + 2; // +1 header, +1 index 0
+  const rowNumber = idx + 2;
   const value = nuevoEstado ? "TRUE" : "FALSE";
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
+    spreadsheetId: getSheetId(),
     range: `Tecnicos!G${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[value]] },
@@ -294,15 +295,8 @@ export async function toggleTecnicoActivo(
 }
 
 // ============================================================
-// REGENERAR CRONOGRAMA_VISUAL (matriz 13×N días)
+// REGENERAR CRONOGRAMA_VISUAL
 // ============================================================
-/**
- * Lee _Cronograma_Datos y regenera la hoja Cronograma_Visual
- * con el formato matriz: filas=técnicos, columnas=días.
- *
- * @param year Año a regenerar (ej: 2026)
- * @param month Mes a regenerar (1-12). Si no se pasa, regenera todo el año.
- */
 export async function regenerarCronogramaVisual(
   year: number,
   month?: number
@@ -314,11 +308,9 @@ export async function regenerarCronogramaVisual(
   for (const o of ots) otMap[o.codigo] = o;
 
   const entries = await getCronograma();
-  // index: tecnico_id|fecha -> entry
   const map: Record<string, EntradaCronograma> = {};
   for (const e of entries) map[`${e.tecnico_id}|${e.fecha}`] = e;
 
-  // Días a generar
   const days: Date[] = [];
   if (month) {
     const last = new Date(year, month, 0).getDate();
@@ -330,8 +322,6 @@ export async function regenerarCronogramaVisual(
     }
   }
 
-  // Construir matriz
-  // Fila 1: encabezado ["N°", "Nombre", "Cargo", "1 Lun", "2 Mar", ...]
   const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
   const header = [
     "N°",
@@ -373,20 +363,15 @@ export async function regenerarCronogramaVisual(
     rows.push(row);
   }
 
-  // Limpiar y escribir
   await sheets.spreadsheets.values.clear({
-    spreadsheetId: SHEET_ID,
+    spreadsheetId: getSheetId(),
     range: "Cronograma_Visual!A1:ZZ",
   });
 
-  // Calcular rango
-  const endCol = String.fromCharCode(65 + (3 + days.length - 1)); // A=65
-  // Si hay más de 26 columnas esto no alcanza, pero para 365 días se necesita notación AA, AB...
-  // Mejor usar writeRange con la última columna calculada:
   const lastCol = colToLetter(3 + days.length);
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
+    spreadsheetId: getSheetId(),
     range: `Cronograma_Visual!A1:${lastCol}${rows.length}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: rows },
