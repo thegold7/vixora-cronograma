@@ -16,7 +16,8 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
 
   const [actividad, setActividad] = useState("");
   const [otsSel, setOtsSel] = useState<string[]>([]);
-  const [detalle, setDetalle] = useState("");
+  // detallesPorOt: mapa de codigo OT -> detalle ingresado por el usuario
+  const [detallesPorOt, setDetallesPorOt] = useState<Record<string, string>>({});
   const [notas, setNotas] = useState("");
   const [query, setQuery] = useState("");
   const [guardando, setGuardando] = useState(false);
@@ -32,41 +33,33 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
         ? existente.ots_asignadas.split(",").map((s) => s.trim()).filter(Boolean)
         : [];
       setOtsSel(existOts);
-      setDetalle(existente.detalle === "—" ? "" : existente.detalle);
+      // Si hay un detalle existente, intentar parsearlo: cada OT puede tener su propio detalle
+      // Formato esperado: "621236 - detalle1\n621237 - detalle2"
+      const detallesIniciales: Record<string, string> = {};
+      if (existente.detalle && existente.detalle !== "—") {
+        const lineas = existente.detalle.split("\n").filter((l) => l.trim());
+        for (const linea of lineas) {
+          // Si la línea empieza con "código -", separar
+          const match = linea.match(/^(\S+)\s*-\s*(.+)$/);
+          if (match) {
+            detallesIniciales[match[1]] = match[2];
+          }
+        }
+      }
+      setDetallesPorOt(detallesIniciales);
       setNotas(existente.notas || "");
     } else {
       setActividad("");
       setOtsSel([]);
-      setDetalle("");
+      setDetallesPorOt({});
       setNotas("");
     }
+    // Si hay OTs seleccionadas en el store (vía drag o panel), agregarlas
     if (otSeleccionadas.length > 0) {
       setOtsSel((prev) => Array.from(new Set([...prev, ...otSeleccionadas])));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modalEdicion]);
-
-  // Auto-generar "detalle" cuando cambian las OTs seleccionadas
-  useEffect(() => {
-    if (otsSel.length === 0) return;
-    const lineas = otsSel.map((cod) => {
-      const ot = ots.find((o) => o.codigo === cod);
-      if (ot) {
-        const desc = `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim();
-        return `${cod} - ${desc}`;
-      }
-      return cod;
-    });
-    const autogenerado = lineas.join("\n");
-    setDetalle((prev) => {
-      if (!prev || prev.trim() === "") return autogenerado;
-      const lineasPrev = prev.split("\n").filter((l) => l.trim());
-      const esAutogenerado = lineasPrev.every((l) => /^\S+\s+-\s+/.test(l));
-      if (esAutogenerado) return autogenerado;
-      return prev;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otsSel]);
 
   const handleClose = () => {
     limpiarOTsSeleccionadas();
@@ -118,6 +111,17 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     );
   };
 
+  // Construir el detalle final a partir de los detallesPorOt
+  // Formato: cada OT en su propia línea con "código - detalle"
+  const construirDetalle = () => {
+    if (otsSel.length === 0) return "—";
+    const lineas = otsSel.map((cod) => {
+      const detalle = detallesPorOt[cod]?.trim() || "";
+      return detalle ? `${cod} - ${detalle}` : cod;
+    });
+    return lineas.join("\n");
+  };
+
   const handleGuardar = async () => {
     if (!actividad) {
       showToast("Selecciona una actividad", "error");
@@ -125,10 +129,11 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     }
     setGuardando(true);
     const ots_str = otsSel.length > 0 ? otsSel.join(", ") : "—";
+    const detalleFinal = construirDetalle();
     await guardarEntrada(modalEdicion.tecnico_id!, modalEdicion.fecha!, {
       actividad,
       ots_asignadas: ots_str,
-      detalle,
+      detalle: detalleFinal,
       notas,
     });
     setGuardando(false);
@@ -176,6 +181,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Actividad */}
           <div>
             <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
               Actividad <span className="text-red-500">*</span>
@@ -206,6 +212,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
             </div>
           </div>
 
+          {/* OTs */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-gray-700">
@@ -262,22 +269,52 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
             </div>
           </div>
 
-          <div>
-            <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
-              Detalle (texto libre — se auto-genera con las OTs seleccionadas)
-            </label>
-            <textarea
-              value={detalle}
-              onChange={(e) => setDetalle(e.target.value)}
-              placeholder="Ej: 621236 - MARCOBRE CURSO&#10;621237 - ANTAPACCAY CURSO"
-              rows={3}
-              className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400 resize-none font-mono"
-            />
-            <p className="text-[10px] text-gray-400 mt-1">
-              💡 Si seleccionas OTs, este campo se auto-llena con el formato "código - cliente sede" (una línea por OT).
-            </p>
-          </div>
+          {/* Detalle por OT — cajas individuales */}
+          {otsSel.length > 0 && (
+            <div>
+              <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
+                Detalle por OT
+              </label>
+              <p className="text-[10px] text-gray-400 mb-2">
+                Ingresa el detalle/actividad para cada OT seleccionada. Solo el código se guarda si dejas la caja vacía.
+              </p>
+              <div className="space-y-2">
+                {otsSel.map((cod) => {
+                  const ot = ots.find((o) => o.codigo === cod);
+                  return (
+                    <div key={cod} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
+                      <div className="text-xs font-bold text-gray-900 w-24 shrink-0 mt-1.5">
+                        {cod}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[10px] text-gray-500 mb-1">
+                          {ot ? `${ot.cliente}${ot.sede ? " · " + ot.sede : ""}` : ""}
+                        </div>
+                        <input
+                          type="text"
+                          value={detallesPorOt[cod] || ""}
+                          onChange={(e) =>
+                            setDetallesPorOt((prev) => ({ ...prev, [cod]: e.target.value }))
+                          }
+                          placeholder="Ej: CURSO, DOCUMENTACIÓN, etc."
+                          className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Preview del detalle final */}
+              <div className="mt-2 p-2 bg-pink-50 border border-pink-200 rounded">
+                <div className="text-[10px] font-bold text-pink-700 mb-1">Preview del detalle:</div>
+                <pre className="text-[10px] text-pink-900 whitespace-pre-wrap font-mono">
+                  {construirDetalle() === "—" ? "(vacío)" : construirDetalle()}
+                </pre>
+              </div>
+            </div>
+          )}
 
+          {/* Notas */}
           <div>
             <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
               Notas internas
