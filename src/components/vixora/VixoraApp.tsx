@@ -72,6 +72,7 @@ export function VixoraApp() {
                   tecnicos={tecnicos}
                   actividades={actividades}
                   cronograma={cronograma}
+                  ots={ots}
                   modoAcceso={modoAcceso}
                 />
                 {modoAcceso === "lector" && (
@@ -81,7 +82,7 @@ export function VixoraApp() {
                 )}
                 {modoAcceso === "editor" && (
                   <p className="mt-3 text-xs text-gray-400 italic">
-                    💡 Click en celda para editar · Shift+Click para rango · Arrastra OTs desde el panel derecho
+                    💡 Click en celda para editar · Arrastra mouse para seleccionar rango · Shift+Click para extender · Arrastra OTs desde el panel derecho
                   </p>
                 )}
               </div>
@@ -96,6 +97,7 @@ export function VixoraApp() {
                 tecnicos={tecnicos}
                 actividades={actividades}
                 cronograma={cronograma}
+                ots={ots}
               />
             )}
           </div>
