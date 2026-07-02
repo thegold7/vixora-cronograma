@@ -1,18 +1,19 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { COLOR_HEX, type Tecnico, type Actividad, type CronogramaMap } from "@/lib/types";
+import { COLOR_HEX, type Tecnico, type Actividad, type CronogramaMap, type OT } from "@/lib/types";
 import { useMemo } from "react";
 
 interface Props {
   tecnicos: Tecnico[];
   actividades: Actividad[];
   cronograma: CronogramaMap;
+  ots: OT[];
 }
 
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
-export function Estadisticas({ tecnicos, actividades, cronograma }: Props) {
+export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) {
   const { fechaActual } = useStore();
 
   const stats = useMemo(() => {
@@ -21,35 +22,29 @@ export function Estadisticas({ tecnicos, actividades, cronograma }: Props) {
     const year = fechaActual.getFullYear();
     const month = fechaActual.getMonth();
 
-    // entradas del mes actual
     const mesEntries = Object.values(cronograma).filter((e) => {
       const [y, m] = e.fecha.split("-").map(Number);
       return y === year && m === month + 1;
     });
 
-    // distribución por color
     const distColor: Record<string, number> = { rojo: 0, amarillo: 0, verde: 0 };
     for (const e of mesEntries) {
       const a = actividades.find((x) => x.nombre === e.actividad);
       if (a) distColor[a.color]++;
     }
 
-    // distribución por técnico
     const porTecnico: Record<string, number> = {};
     for (const e of mesEntries) {
       porTecnico[e.tecnico_id] = (porTecnico[e.tecnico_id] ?? 0) + 1;
     }
 
-    // carga laboral (porcentaje del mes con asignaciones)
     const diasMes = new Date(year, month + 1, 0).getDate();
     const cargaMax = total * diasMes;
     const cargaActual = mesEntries.length;
     const cargaPct = cargaMax > 0 ? Math.round((cargaActual / cargaMax) * 100) : 0;
 
-    // técnicos con sobrecarga (>22 asignaciones en el mes)
     const sobrecarga = activos.filter((t) => (porTecnico[t.id] ?? 0) > 22);
 
-    // estado: disponibles / en proyecto / oficina
     let enProyecto = 0;
     let enOficina = 0;
     let disponibles = 0;
@@ -68,6 +63,20 @@ export function Estadisticas({ tecnicos, actividades, cronograma }: Props) {
       }
     }
 
+    const otCount: Record<string, number> = {};
+    for (const e of mesEntries) {
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        const codigos = e.ots_asignadas.split(",").map((s) => s.trim()).filter(Boolean);
+        for (const cod of codigos) {
+          otCount[cod] = (otCount[cod] ?? 0) + 1;
+        }
+      }
+    }
+    const statsPorOt = Object.entries(otCount)
+      .map(([codigo, count]) => ({ codigo, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
     return {
       total,
       mesEntries: mesEntries.length,
@@ -78,19 +87,17 @@ export function Estadisticas({ tecnicos, actividades, cronograma }: Props) {
       enProyecto,
       enOficina,
       disponibles,
+      statsPorOt,
     };
-  }, [tecnicos, cronograma, actividades, fechaActual]);
+  }, [tecnicos, cronograma, actividades, fechaActual, ots]);
 
-  const total = stats.total || 1; // evitar div 0
+  const total = stats.total || 1;
   const donaPct = (n: number) => Math.round((n / total) * 100);
 
-  // Dona SVG
   const totalDona = stats.enProyecto + stats.enOficina + stats.disponibles || 1;
   const angProy = (stats.enProyecto / totalDona) * 360;
   const angOfi = (stats.enOficina / totalDona) * 360;
-  const angDisp = (stats.disponibles / totalDona) * 360;
 
-  // Función para arcos SVG
   const arco = (inicio: number, fin: number, color: string) => {
     const r = 60;
     const cx = 70;
@@ -120,7 +127,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma }: Props) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Dona de distribución */}
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <h3 className="text-sm font-bold text-gray-700 mb-3">Estado del personal (hoy)</h3>
           <div className="flex items-center gap-4">
@@ -144,7 +150,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma }: Props) {
           </div>
         </div>
 
-        {/* Carga laboral */}
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <h3 className="text-sm font-bold text-gray-700 mb-3">Carga laboral del mes</h3>
           <div className="mb-3">
@@ -190,7 +195,43 @@ export function Estadisticas({ tecnicos, actividades, cronograma }: Props) {
           )}
         </div>
 
-        {/* Distribución por color */}
+        <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">
+            Top 10 OTs más asignadas (mes actual)
+          </h3>
+          {stats.statsPorOt.length === 0 ? (
+            <p className="text-xs text-gray-400">No hay asignaciones en el mes actual.</p>
+          ) : (
+            <div className="space-y-2">
+              {stats.statsPorOt.map((item, i) => {
+                const ot = ots.find((o) => o.codigo === item.codigo);
+                const maxCount = stats.statsPorOt[0].count || 1;
+                const pct = Math.round((item.count / maxCount) * 100);
+                return (
+                  <div key={item.codigo} className="flex items-center gap-2">
+                    <div className="w-6 text-xs font-bold text-gray-400">{i + 1}</div>
+                    <div className="w-20 text-xs font-semibold text-gray-900">{item.codigo}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-gray-600 truncate">
+                        {ot ? ot.cliente : "—"}
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded overflow-hidden mt-0.5">
+                        <div
+                          className="h-full bg-[#E91E63]"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-xs font-bold text-gray-900 w-8 text-right">
+                      {item.count}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
           <h3 className="text-sm font-bold text-gray-700 mb-3">
             Distribución de actividades por color
