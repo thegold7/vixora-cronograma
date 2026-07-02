@@ -112,7 +112,7 @@ export async function getActividades(): Promise<Actividad[]> {
 }
 
 // ============================================================
-// LECTURA — CRONOGRAMA
+// LECTURA — CRONOGRAMA (hoja oculta _Cronograma_Datos)
 // ============================================================
 export async function getCronograma(): Promise<EntradaCronograma[]> {
   return readSheet("_Cronograma_Datos", (r) => ({
@@ -128,6 +128,10 @@ export async function getCronograma(): Promise<EntradaCronograma[]> {
   }));
 }
 
+/**
+ * Devuelve el cronograma en formato mapa indexado por `${tecnico_id}|${fecha}`
+ * para acceso O(1) desde la UI.
+ */
 export async function getCronogramaMap(): Promise<
   Record<string, EntradaCronograma>
 > {
@@ -158,6 +162,11 @@ async function getNextId(): Promise<string> {
   return `C${String(max + 1).padStart(4, "0")}`;
 }
 
+/**
+ * Crea o actualiza una entrada del cronograma.
+ * Si ya existe una entrada para (tecnico_id, fecha), la actualiza in-place.
+ * Si no existe, agrega una nueva fila al final.
+ */
 export async function upsertEntradaCronograma(
   params: {
     tecnico_id: string;
@@ -232,6 +241,10 @@ export async function upsertEntradaCronograma(
   }
 }
 
+/**
+ * Elimina una entrada del cronograma (cuando se borra una celda).
+ * Estrategia: reescribimos toda la hoja sin la fila eliminada.
+ */
 export async function deleteEntradaCronograma(
   tecnico_id: string,
   fecha: string
@@ -295,7 +308,67 @@ export async function toggleTecnicoActivo(
 }
 
 // ============================================================
-// REGENERAR CRONOGRAMA_VISUAL
+// ESCRITURA — OTs (cambiar estado y agregar nuevas)
+// ============================================================
+
+/**
+ * Cambia el estado de una OT (EN PROCESO → FINALIZADO, etc.)
+ * También actualiza la columna "activo":
+ *   - FINALIZADO o PERDIDO → activo = FALSE
+ *   - EN PROCESO o PENDIENTE → activo = TRUE
+ */
+export async function updateOtEstado(
+  codigo: string,
+  nuevoEstado: string
+): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getOTs();
+  const idx = all.findIndex((o) => o.codigo === codigo);
+  if (idx < 0) throw new Error(`OT ${codigo} no encontrada`);
+  const rowNumber = idx + 2;
+  const estadoUpper = nuevoEstado.toUpperCase();
+  const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `OTs!D${rowNumber}:E${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[estadoUpper, activo]] },
+  });
+  return { ok: true };
+}
+
+/**
+ * Agrega una nueva OT al final de la hoja OTs.
+ */
+export async function addOt(
+  codigo: string,
+  cliente: string,
+  sede: string,
+  estado: string
+): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const estadoUpper = estado.toUpperCase();
+  const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
+
+  const all = await getOTs();
+  if (all.some((o) => o.codigo === codigo)) {
+    throw new Error(`Ya existe una OT con código ${codigo}`);
+  }
+
+  const values = [[codigo, cliente, sede, estadoUpper, activo]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: "OTs!A:E",
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+  return { ok: true };
+}
+
+// ============================================================
+// REGENERAR CRONOGRAMA_VISUAL (matriz con separadores de mes)
 // ============================================================
 export async function regenerarCronogramaVisual(
   year: number,
@@ -311,7 +384,6 @@ export async function regenerarCronogramaVisual(
   const map: Record<string, EntradaCronograma> = {};
   for (const e of entries) map[`${e.tecnico_id}|${e.fecha}`] = e;
 
-  // Determinar qué meses generar
   const mesesAGenerar: number[] = month ? [month] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
   const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
@@ -321,11 +393,10 @@ export async function regenerarCronogramaVisual(
   let totalColumnas = 0;
 
   for (const mes of mesesAGenerar) {
-    // Generar fila separadora de mes: "ENERO 2026" ocupando varias columnas
     const last = new Date(year, mes, 0).getDate();
     totalColumnas = Math.max(totalColumnas, 3 + last);
 
-    // Fila separadora: primera celda con el nombre del mes, resto vacío
+    // Fila separadora de mes: "01-ENERO-2026"
     const filaMes: string[] = [`${String(mes).padStart(2, "0")}-${MESES_ES[mes - 1].toUpperCase()}-${year}`];
     for (let i = 1; i < 3 + last; i++) filaMes.push("");
     rows.push(filaMes);
@@ -358,8 +429,6 @@ export async function regenerarCronogramaVisual(
           for (const cod of codigos) {
             const ot = otMap[cod];
             if (ot) {
-              // Buscar el detalle específico de esta OT en e.detalle
-              // Formato detalle: "código - detalle\n..."
               let detalleOt = "";
               if (e.detalle && e.detalle !== "—") {
                 const lineas = e.detalle.split("\n");
@@ -389,7 +458,7 @@ export async function regenerarCronogramaVisual(
       rows.push(row);
     }
 
-    // Fila vacía entre meses (excepto después del último)
+    // Fila vacía entre meses
     if (mesesAGenerar.indexOf(mes) < mesesAGenerar.length - 1) {
       const filaVacia: string[] = [];
       for (let i = 0; i < 3 + last; i++) filaVacia.push("");
@@ -397,7 +466,6 @@ export async function regenerarCronogramaVisual(
     }
   }
 
-  // Limpiar y escribir
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
     range: "Cronograma_Visual!A1:ZZ",
@@ -414,6 +482,7 @@ export async function regenerarCronogramaVisual(
 
   return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
+
 function colToLetter(col: number): string {
   let letter = "";
   while (col > 0) {
