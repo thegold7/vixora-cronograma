@@ -49,8 +49,11 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragHover, setDragHover] = useState<string | null>(null);
 
+  // Estado para drag-to-select de fechas
+  // IMPORTANTE: solo selecciona HORIZONTALMENTE (misma fila = mismo técnico)
   const [dragSelectStart, setDragSelectStart] = useState<string | null>(null);
   const [dragSelectEnd, setDragSelectEnd] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const tecnicosVisibles = tecnicos.filter((t) => t.activo);
 
@@ -61,6 +64,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
   const otMap: Record<string, OT> = {};
   for (const o of ots) otMap[o.codigo] = o;
 
+  // Drag & drop de OTs desde el panel
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {
       if (modoAcceso !== "editor") return;
@@ -109,6 +113,11 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
 
   const handleCellClick = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
     if (modoAcceso !== "editor") return;
+    // Si estábamos arrastrando para seleccionar rango, no abrir modal
+    if (isDragging) {
+      setIsDragging(false);
+      return;
+    }
     if (e.shiftKey && seleccionRango.inicio) {
       const inicio = seleccionRango.inicio <= fecha ? seleccionRango.inicio : fecha;
       const fin = seleccionRango.inicio <= fecha ? fecha : seleccionRango.inicio;
@@ -118,21 +127,27 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     abrirModalEdicion(tecnico_id, fecha);
   };
 
+  // Drag-to-select HORIZONTAL: empezar en una celda
   const handleCellMouseDown = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
     if (modoAcceso !== "editor") return;
-    if (e.button !== 0) return;
+    if (e.button !== 0) return; // solo botón izquierdo
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    // Iniciar selección
     setDragSelectStart(`${tecnico_id}|${fecha}`);
     setDragSelectEnd(`${tecnico_id}|${fecha}`);
+    setIsDragging(false);
   };
 
+  // Al entrar a otra celda (solo si es la MISMA fila = mismo técnico)
   const handleCellMouseEnter = (tecnico_id: string, fecha: string) => {
-    if (dragSelectStart) {
-      const [tecStart] = dragSelectStart.split("|");
-      if (tecStart === tecnico_id) {
-        setDragSelectEnd(`${tecnico_id}|${fecha}`);
-      }
+    if (!dragSelectStart) return;
+    const [tecStart] = dragSelectStart.split("|");
+    // SOLO extender si es la MISMA FILA (mismo técnico)
+    if (tecStart === tecnico_id) {
+      setDragSelectEnd(`${tecnico_id}|${fecha}`);
+      setIsDragging(true);
     }
+    // Si es otra fila, NO extender (no selecciona columnas)
   };
 
   const handleCellMouseUp = (tecnico_id: string, fecha: string) => {
@@ -140,10 +155,15 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     const [tecStart, fechaStart] = dragSelectStart.split("|");
     const fechaEnd = fecha;
 
+    // Solo crear rango si es la misma fila y fechas distintas
     if (tecStart === tecnico_id && fechaStart !== fechaEnd) {
       const inicio = fechaStart <= fechaEnd ? fechaStart : fechaEnd;
       const fin = fechaStart <= fechaEnd ? fechaEnd : fechaStart;
       setSeleccionRango({ inicio, fin });
+      setIsDragging(false);
+    } else if (tecStart === tecnico_id && fechaStart === fechaEnd && !isDragging) {
+      // Si fue solo un click sin arrastrar, abrir modal
+      // (se maneja en onClick)
     }
     setDragSelectStart(null);
     setDragSelectEnd(null);
@@ -180,11 +200,30 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
             {entrada.ots_asignadas.split(",").map((cod, i) => {
               const c = cod.trim();
               const ot = otMap[c];
-              const desc = ot ? `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim() : "";
+              // Buscar el detalle de esa OT en entrada.detalle
+              // Formato detalle: "código - detalle\n..."
+              let detalleOt = "";
+              if (entrada.detalle && entrada.detalle !== "—") {
+                const lineas = entrada.detalle.split("\n");
+                for (const linea of lineas) {
+                  const match = linea.match(/^(\S+)\s*-\s*(.+)$/);
+                  if (match && match[1] === c) {
+                    detalleOt = match[2];
+                    break;
+                  }
+                }
+              }
               return (
                 <div key={i} className="text-gray-700">
                   <div className="font-medium">{c}</div>
-                  {desc && <div className="text-gray-500 text-[9px] leading-tight">{desc}</div>}
+                  {detalleOt && (
+                    <div className="text-gray-500 text-[9px] leading-tight italic">{detalleOt}</div>
+                  )}
+                  {!detalleOt && ot && (
+                    <div className="text-gray-400 text-[9px] leading-tight">
+                      {ot.cliente}{ot.sede ? " · " + ot.sede : ""}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -205,14 +244,19 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
         if (dragSelectStart) {
           setDragSelectStart(null);
           setDragSelectEnd(null);
+          setIsDragging(false);
         }
       }}
     >
-      <div className="sticky top-0 z-20 bg-[#1d1d1f] text-white flex">
-        <div className="sticky left-0 z-30 bg-[#1d1d1f] border-r border-gray-700 min-w-[220px] p-2 text-xs font-semibold">
+      {/* Header con días - TODOS con el MISMO color de fondo (negro uniforme) */}
+      <div className="sticky top-0 z-20 flex" style={{ backgroundColor: "#1d1d1f" }}>
+        <div
+          className="sticky left-0 z-30 border-r border-gray-700 min-w-[220px] p-2 text-xs font-semibold text-white"
+          style={{ backgroundColor: "#1d1d1f" }}
+        >
           TÉCNICO
         </div>
-        <div className="flex">
+        <div className="flex" style={{ backgroundColor: "#1d1d1f" }}>
           {dias.map((d) => {
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
             const iso = formatFechaISO(d);
@@ -220,9 +264,10 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
             return (
               <div
                 key={iso}
-                className={`border-r border-gray-700 min-w-[120px] text-center py-2 ${
-                  isWeekend ? "bg-[#2a2a2c]" : ""
-                } ${inRango ? "bg-[#E91E63]/40" : ""}`}
+                className={`border-r border-gray-700 min-w-[120px] text-center py-2 text-white ${
+                  isWeekend ? "opacity-80" : ""
+                } ${inRango ? "bg-[#E91E63]" : ""}`}
+                style={{ backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
               >
                 <div className="text-xs font-semibold">{d.getDate()}</div>
                 <div className="text-[10px] opacity-70">{DOW_ES[d.getDay()]}</div>
@@ -285,7 +330,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                     }
                     title={
                       modoAcceso === "editor"
-                        ? "Click: editar · Arrastra mouse: rango · Shift+Click: extender · Arrastra OT aquí: asignar"
+                        ? "Click: editar · Arrastra mouse: rango horizontal · Shift+Click: extender · Arrastra OT aquí: asignar"
                         : undefined
                     }
                   >
