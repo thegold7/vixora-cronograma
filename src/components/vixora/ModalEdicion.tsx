@@ -12,9 +12,8 @@ interface Props {
 }
 
 export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
-  const { modalEdicion, cerrarModalEdicion, guardarEntrada, borrarEntrada, cronograma, otSeleccionadas, toggleOTSeleccionada, limpiarOTsSeleccionadas, showToast, seleccionRango } = useStore();
+  const { modalEdicion, cerrarModalEdicion, guardarEntrada, borrarEntrada, cronograma, otSeleccionadas, limpiarOTsSeleccionadas, showToast, seleccionRango } = useStore();
 
-  // estado local del formulario
   const [actividad, setActividad] = useState("");
   const [otsSel, setOtsSel] = useState<string[]>([]);
   const [detalle, setDetalle] = useState("");
@@ -41,18 +40,39 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
       setDetalle("");
       setNotas("");
     }
-    // Si hay OTs seleccionadas en el store (vía drag o panel), usarlas
     if (otSeleccionadas.length > 0) {
       setOtsSel((prev) => Array.from(new Set([...prev, ...otSeleccionadas])));
     }
-  }, [modalEdicion, cronograma, otSeleccionadas]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalEdicion]);
+
+  // Auto-generar "detalle" cuando cambian las OTs seleccionadas
+  useEffect(() => {
+    if (otsSel.length === 0) return;
+    const lineas = otsSel.map((cod) => {
+      const ot = ots.find((o) => o.codigo === cod);
+      if (ot) {
+        const desc = `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim();
+        return `${cod} - ${desc}`;
+      }
+      return cod;
+    });
+    const autogenerado = lineas.join("\n");
+    setDetalle((prev) => {
+      if (!prev || prev.trim() === "") return autogenerado;
+      const lineasPrev = prev.split("\n").filter((l) => l.trim());
+      const esAutogenerado = lineasPrev.every((l) => /^\S+\s+-\s+/.test(l));
+      if (esAutogenerado) return autogenerado;
+      return prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otsSel]);
 
   const handleClose = () => {
     limpiarOTsSeleccionadas();
     cerrarModalEdicion();
   };
 
-  // Cerrar con Escape
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && modalEdicion?.abierto) {
@@ -64,7 +84,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modalEdicion]);
 
-  // calcular si el modal corresponde a una celda dentro del rango seleccionado
   const enRango =
     seleccionRango.inicio &&
     seleccionRango.fin &&
@@ -136,7 +155,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
         className="bg-white rounded-lg shadow-2xl w-[95%] max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div
           className="px-4 py-3 flex items-center justify-between text-white"
           style={{ backgroundColor: colorHex?.border ?? "#1d1d1f" }}
@@ -157,9 +175,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* Actividad */}
           <div>
             <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
               Actividad <span className="text-red-500">*</span>
@@ -190,7 +206,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
             </div>
           </div>
 
-          {/* OTs */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-gray-700">
@@ -247,21 +262,22 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
             </div>
           </div>
 
-          {/* Detalle */}
           <div>
             <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
-              Detalle (texto libre)
+              Detalle (texto libre — se auto-genera con las OTs seleccionadas)
             </label>
-            <input
-              type="text"
+            <textarea
               value={detalle}
               onChange={(e) => setDetalle(e.target.value)}
-              placeholder="Ej: STRACON CURSOS · MOTA ENGIL DOC."
-              className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
+              placeholder="Ej: 621236 - MARCOBRE CURSO&#10;621237 - ANTAPACCAY CURSO"
+              rows={3}
+              className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400 resize-none font-mono"
             />
+            <p className="text-[10px] text-gray-400 mt-1">
+              💡 Si seleccionas OTs, este campo se auto-llena con el formato "código - cliente sede" (una línea por OT).
+            </p>
           </div>
 
-          {/* Notas */}
           <div>
             <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
               Notas internas
@@ -276,7 +292,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="border-t border-gray-200 p-3 flex items-center justify-between gap-2">
           <div>
             {cronograma[`${modalEdicion.tecnico_id}|${modalEdicion.fecha}`] && (
