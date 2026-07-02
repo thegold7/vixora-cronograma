@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore, formatFechaISO } from "@/lib/store";
-import { VIXORA_COLORS, COLOR_HEX, type Tecnico, type Actividad, type EntradaCronograma, type CronogramaMap } from "@/lib/types";
+import { COLOR_HEX, type Tecnico, type Actividad, type EntradaCronograma, type CronogramaMap, type OT } from "@/lib/types";
 import { useState, useRef, useEffect } from "react";
 
 const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
@@ -10,6 +10,7 @@ interface Props {
   tecnicos: Tecnico[];
   actividades: Actividad[];
   cronograma: CronogramaMap;
+  ots: OT[];
   modoAcceso: "lector" | "editor";
 }
 
@@ -36,16 +37,29 @@ function getDiasSemana(fecha: Date): Date[] {
   });
 }
 
-export function Calendario({ tecnicos, actividades, cronograma, modoAcceso }: Props) {
-  const { vista, fechaActual, mostrarDetalles, abrirModalEdicion, seleccionRango, setSeleccionRango } = useStore();
+export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso }: Props) {
+  const {
+    vista,
+    fechaActual,
+    mostrarDetalles,
+    abrirModalEdicion,
+    seleccionRango,
+    setSeleccionRango,
+  } = useStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragHover, setDragHover] = useState<string | null>(null);
+
+  const [dragSelectStart, setDragSelectStart] = useState<string | null>(null);
+  const [dragSelectEnd, setDragSelectEnd] = useState<string | null>(null);
 
   const tecnicosVisibles = tecnicos.filter((t) => t.activo);
 
   const dias = vista === "mes"
     ? getDiasMes(fechaActual.getFullYear(), fechaActual.getMonth())
     : getDiasSemana(fechaActual);
+
+  const otMap: Record<string, OT> = {};
+  for (const o of ots) otMap[o.codigo] = o;
 
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {
@@ -69,10 +83,10 @@ export function Calendario({ tecnicos, actividades, cronograma, modoAcceso }: Pr
       const otsData = e.dataTransfer?.getData("text/plain");
       if (otsData) {
         try {
-          const ots = JSON.parse(otsData);
+          const otsArr = JSON.parse(otsData);
           abrirModalEdicion(tecnico_id, fecha);
           useStore.getState().limpiarOTsSeleccionadas();
-          ots.forEach((c: string) => {
+          otsArr.forEach((c: string) => {
             useStore.getState().toggleOTSeleccionada(c);
           });
         } catch {
@@ -95,20 +109,44 @@ export function Calendario({ tecnicos, actividades, cronograma, modoAcceso }: Pr
 
   const handleCellClick = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
     if (modoAcceso !== "editor") return;
-    if (e.shiftKey) {
-      const iso = fecha;
-      if (!seleccionRango.inicio) {
-        setSeleccionRango({ inicio: iso, fin: iso });
-      } else if (!seleccionRango.fin) {
-        const inicio = seleccionRango.inicio <= iso ? seleccionRango.inicio : iso;
-        const fin = seleccionRango.inicio <= iso ? iso : seleccionRango.inicio;
-        setSeleccionRango({ inicio, fin });
-      } else {
-        setSeleccionRango({ inicio: iso, fin: null });
-      }
+    if (e.shiftKey && seleccionRango.inicio) {
+      const inicio = seleccionRango.inicio <= fecha ? seleccionRango.inicio : fecha;
+      const fin = seleccionRango.inicio <= fecha ? fecha : seleccionRango.inicio;
+      setSeleccionRango({ inicio, fin });
       return;
     }
     abrirModalEdicion(tecnico_id, fecha);
+  };
+
+  const handleCellMouseDown = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
+    if (modoAcceso !== "editor") return;
+    if (e.button !== 0) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    setDragSelectStart(`${tecnico_id}|${fecha}`);
+    setDragSelectEnd(`${tecnico_id}|${fecha}`);
+  };
+
+  const handleCellMouseEnter = (tecnico_id: string, fecha: string) => {
+    if (dragSelectStart) {
+      const [tecStart] = dragSelectStart.split("|");
+      if (tecStart === tecnico_id) {
+        setDragSelectEnd(`${tecnico_id}|${fecha}`);
+      }
+    }
+  };
+
+  const handleCellMouseUp = (tecnico_id: string, fecha: string) => {
+    if (!dragSelectStart) return;
+    const [tecStart, fechaStart] = dragSelectStart.split("|");
+    const fechaEnd = fecha;
+
+    if (tecStart === tecnico_id && fechaStart !== fechaEnd) {
+      const inicio = fechaStart <= fechaEnd ? fechaStart : fechaEnd;
+      const fin = fechaStart <= fechaEnd ? fechaEnd : fechaStart;
+      setSeleccionRango({ inicio, fin });
+    }
+    setDragSelectStart(null);
+    setDragSelectEnd(null);
   };
 
   const isCellInRango = (fecha: string) => {
@@ -117,8 +155,59 @@ export function Calendario({ tecnicos, actividades, cronograma, modoAcceso }: Pr
     return fecha >= seleccionRango.inicio! && fecha <= seleccionRango.fin!;
   };
 
+  const isCellInDragRange = (tecnico_id: string, fecha: string) => {
+    if (!dragSelectStart || !dragSelectEnd) return false;
+    const [tecStart, fechaStart] = dragSelectStart.split("|");
+    const [, fechaEnd] = dragSelectEnd.split("|");
+    if (tecStart !== tecnico_id) return false;
+    const inicio = fechaStart <= fechaEnd ? fechaStart : fechaEnd;
+    const fin = fechaStart <= fechaEnd ? fechaEnd : fechaStart;
+    return fecha >= inicio && fecha <= fin;
+  };
+
+  const renderCellContent = (entrada: EntradaCronograma) => {
+    const colorHex = getColorHex(actividades, entrada.actividad);
+    return (
+      <div className="text-[10px] leading-tight">
+        <div
+          className="font-bold"
+          style={{ color: colorHex?.text }}
+        >
+          {entrada.actividad}
+        </div>
+        {mostrarDetalles && entrada.ots_asignadas && entrada.ots_asignadas !== "—" && (
+          <div className="mt-0.5 space-y-0.5">
+            {entrada.ots_asignadas.split(",").map((cod, i) => {
+              const c = cod.trim();
+              const ot = otMap[c];
+              const desc = ot ? `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim() : "";
+              return (
+                <div key={i} className="text-gray-700">
+                  <div className="font-medium">{c}</div>
+                  {desc && <div className="text-gray-500 text-[9px] leading-tight">{desc}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {mostrarDetalles && entrada.notas && (
+          <div className="mt-0.5 text-gray-600 italic text-[9px]">{entrada.notas}</div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div ref={containerRef} className="overflow-auto border border-gray-200 rounded-lg bg-white">
+    <div
+      ref={containerRef}
+      className="overflow-auto border border-gray-200 rounded-lg bg-white"
+      onMouseLeave={() => {
+        if (dragSelectStart) {
+          setDragSelectStart(null);
+          setDragSelectEnd(null);
+        }
+      }}
+    >
       <div className="sticky top-0 z-20 bg-[#1d1d1f] text-white flex">
         <div className="sticky left-0 z-30 bg-[#1d1d1f] border-r border-gray-700 min-w-[220px] p-2 text-xs font-semibold">
           TÉCNICO
@@ -168,6 +257,7 @@ export function Calendario({ tecnicos, actividades, cronograma, modoAcceso }: Pr
                 const colorHex = entrada ? getColorHex(actividades, entrada.actividad) : null;
                 const isDragHover = dragHover === key;
                 const inRango = isCellInRango(iso);
+                const inDragRange = isCellInDragRange(t.id, iso);
 
                 return (
                   <div
@@ -175,13 +265,16 @@ export function Calendario({ tecnicos, actividades, cronograma, modoAcceso }: Pr
                     data-cell-key={key}
                     onClick={(e) => handleCellClick(t.id, iso, e)}
                     onDoubleClick={() => modoAcceso === "editor" && abrirModalEdicion(t.id, iso)}
+                    onMouseDown={(e) => handleCellMouseDown(t.id, iso, e)}
+                    onMouseEnter={() => handleCellMouseEnter(t.id, iso)}
+                    onMouseUp={() => handleCellMouseUp(t.id, iso)}
                     className={`border-r border-gray-200 min-w-[120px] min-h-[64px] p-1 ${
                       modoAcceso === "editor" ? "cursor-pointer" : "cursor-default"
-                    } transition-colors ${
+                    } transition-colors select-none ${
                       isWeekend ? "bg-gray-50" : ""
                     } ${inRango ? "ring-2 ring-[#E91E63] ring-inset" : ""} ${
                       isDragHover ? "bg-[#E91E63]/20 ring-2 ring-[#E91E63] ring-inset" : ""
-                    }`}
+                    } ${inDragRange ? "bg-[#E91E63]/30" : ""}`}
                     style={
                       colorHex && entrada
                         ? {
@@ -190,28 +283,14 @@ export function Calendario({ tecnicos, actividades, cronograma, modoAcceso }: Pr
                           }
                         : undefined
                     }
-                    title={modoAcceso === "editor" ? "Click para editar · Shift+Click para rango · Arrastra OTs aquí" : undefined}
+                    title={
+                      modoAcceso === "editor"
+                        ? "Click: editar · Arrastra mouse: rango · Shift+Click: extender · Arrastra OT aquí: asignar"
+                        : undefined
+                    }
                   >
                     {entrada ? (
-                      <div className="text-[10px] leading-tight">
-                        <div
-                          className="font-bold"
-                          style={{ color: colorHex?.text }}
-                        >
-                          {entrada.actividad}
-                        </div>
-                        {mostrarDetalles && entrada.ots_asignadas && entrada.ots_asignadas !== "—" && (
-                          <div className="mt-0.5 space-y-0.5">
-                            {entrada.ots_asignadas.split(",").map((cod, i) => {
-                              const c = cod.trim();
-                              return <div key={i} className="text-gray-700">{c}</div>;
-                            })}
-                          </div>
-                        )}
-                        {mostrarDetalles && entrada.detalle && entrada.detalle !== "—" && (
-                          <div className="mt-0.5 text-gray-600 italic">{entrada.detalle}</div>
-                        )}
-                      </div>
+                      renderCellContent(entrada)
                     ) : (
                       <div className="text-[10px] text-gray-300 opacity-50">—</div>
                     )}
