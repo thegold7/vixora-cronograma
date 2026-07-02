@@ -2,7 +2,8 @@
 
 import { useStore } from "@/lib/store";
 import { COLOR_HEX, type Tecnico, type Actividad, type CronogramaMap, type OT } from "@/lib/types";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
 
 interface Props {
   tecnicos: Tecnico[];
@@ -14,33 +15,61 @@ interface Props {
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
 export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) {
-  const { fechaActual } = useStore();
+  const { fechaActual, cargarDatos } = useStore();
+  const [rangoInicio, setRangoInicio] = useState<string>("");
+  const [rangoFin, setRangoFin] = useState<string>("");
+  const [actualizando, setActualizando] = useState(false);
+
+  const handleActualizar = async () => {
+    setActualizando(true);
+    await cargarDatos();
+    setActualizando(false);
+  };
 
   const stats = useMemo(() => {
     const activos = tecnicos.filter((t) => t.activo);
     const total = activos.length;
-    const year = fechaActual.getFullYear();
-    const month = fechaActual.getMonth();
 
-    const mesEntries = Object.values(cronograma).filter((e) => {
-      const [y, m] = e.fecha.split("-").map(Number);
-      return y === year && m === month + 1;
-    });
+    // Filtrar entradas por rango de fechas si está especificado
+    let entries = Object.values(cronograma);
+    if (rangoInicio && rangoFin) {
+      entries = entries.filter((e) => {
+        return e.fecha >= rangoInicio && e.fecha <= rangoFin;
+      });
+    } else {
+      // Si no hay rango, usar mes actual
+      const year = fechaActual.getFullYear();
+      const month = fechaActual.getMonth();
+      entries = entries.filter((e) => {
+        const [y, m] = e.fecha.split("-").map(Number);
+        return y === year && m === month + 1;
+      });
+    }
 
     const distColor: Record<string, number> = { rojo: 0, amarillo: 0, verde: 0 };
-    for (const e of mesEntries) {
+    for (const e of entries) {
       const a = actividades.find((x) => x.nombre === e.actividad);
       if (a) distColor[a.color]++;
     }
 
     const porTecnico: Record<string, number> = {};
-    for (const e of mesEntries) {
+    for (const e of entries) {
       porTecnico[e.tecnico_id] = (porTecnico[e.tecnico_id] ?? 0) + 1;
     }
 
-    const diasMes = new Date(year, month + 1, 0).getDate();
-    const cargaMax = total * diasMes;
-    const cargaActual = mesEntries.length;
+    let diasPeriodo = 0;
+    if (rangoInicio && rangoFin) {
+      const diff = Math.round(
+        (new Date(rangoFin).getTime() - new Date(rangoInicio).getTime()) / (1000 * 60 * 60 * 24)
+      ) + 1;
+      diasPeriodo = diff > 0 ? diff : 1;
+    } else {
+      const year = fechaActual.getFullYear();
+      const month = fechaActual.getMonth();
+      diasPeriodo = new Date(year, month + 1, 0).getDate();
+    }
+    const cargaMax = total * diasPeriodo;
+    const cargaActual = entries.length;
     const cargaPct = cargaMax > 0 ? Math.round((cargaActual / cargaMax) * 100) : 0;
 
     const sobrecarga = activos.filter((t) => (porTecnico[t.id] ?? 0) > 22);
@@ -64,7 +93,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     }
 
     const otCount: Record<string, number> = {};
-    for (const e of mesEntries) {
+    for (const e of entries) {
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map((s) => s.trim()).filter(Boolean);
         for (const cod of codigos) {
@@ -79,7 +108,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
 
     return {
       total,
-      mesEntries: mesEntries.length,
+      totalEntries: entries.length,
       distColor,
       porTecnico,
       cargaPct,
@@ -89,7 +118,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       disponibles,
       statsPorOt,
     };
-  }, [tecnicos, cronograma, actividades, fechaActual, ots]);
+  }, [tecnicos, cronograma, actividades, fechaActual, ots, rangoInicio, rangoFin]);
 
   const total = stats.total || 1;
   const donaPct = (n: number) => Math.round((n / total) * 100);
@@ -112,12 +141,55 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
   };
 
+  const periodoLabel = rangoInicio && rangoFin
+    ? `${rangoInicio.split("-").reverse().join("/")} → ${rangoFin.split("-").reverse().join("/")}`
+    : `${MESES_ES[fechaActual.getMonth()]} ${fechaActual.getFullYear()}`;
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <div className="mb-6">
+      <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold text-gray-900">
-          Estadísticas — {MESES_ES[fechaActual.getMonth()]} {fechaActual.getFullYear()}
+          Estadísticas — {periodoLabel}
         </h2>
+        <button
+          onClick={handleActualizar}
+          disabled={actualizando}
+          className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b] disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={actualizando ? "animate-spin" : ""} />
+          {actualizando ? "Actualizando..." : "Actualizar"}
+        </button>
+      </div>
+
+      {/* Selector de rango de fechas */}
+      <div className="mb-6 p-3 bg-white border border-gray-200 rounded-lg flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-semibold text-gray-700">Rango de fechas:</span>
+        <input
+          type="date"
+          value={rangoInicio}
+          onChange={(e) => setRangoInicio(e.target.value)}
+          className="px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
+        />
+        <span className="text-gray-400">→</span>
+        <input
+          type="date"
+          value={rangoFin}
+          onChange={(e) => setRangoFin(e.target.value)}
+          className="px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
+        />
+        {(rangoInicio || rangoFin) && (
+          <button
+            onClick={() => { setRangoInicio(""); setRangoFin(""); }}
+            className="text-xs text-gray-500 hover:text-red-500"
+          >
+            ✕ Limpiar
+          </button>
+        )}
+        {!rangoInicio && !rangoFin && (
+          <span className="text-[10px] text-gray-400 italic">
+            (vacío = mes actual)
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -151,7 +223,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
 
         <div className="bg-white border border-gray-200 rounded-lg p-4">
-          <h3 className="text-sm font-bold text-gray-700 mb-3">Carga laboral del mes</h3>
+          <h3 className="text-sm font-bold text-gray-700 mb-3">Carga laboral del período</h3>
           <div className="mb-3">
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs text-gray-500">% Carga promedio</span>
@@ -174,7 +246,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
               <div className="text-[10px] text-red-600">Sobrecarga</div>
             </div>
             <div className="bg-yellow-50 rounded p-2">
-              <div className="text-xs font-bold text-yellow-700">{stats.mesEntries}</div>
+              <div className="text-xs font-bold text-yellow-700">{stats.totalEntries}</div>
               <div className="text-[10px] text-yellow-600">Asignaciones</div>
             </div>
             <div className="bg-green-50 rounded p-2">
@@ -197,10 +269,10 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
 
         <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
           <h3 className="text-sm font-bold text-gray-700 mb-3">
-            Top 10 OTs más asignadas (mes actual)
+            Top 10 OTs más asignadas
           </h3>
           {stats.statsPorOt.length === 0 ? (
-            <p className="text-xs text-gray-400">No hay asignaciones en el mes actual.</p>
+            <p className="text-xs text-gray-400">No hay asignaciones en el período seleccionado.</p>
           ) : (
             <div className="space-y-2">
               {stats.statsPorOt.map((item, i) => {
@@ -240,7 +312,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
             {(["rojo", "amarillo", "verde"] as const).map((c) => {
               const hex = COLOR_HEX[c];
               const count = stats.distColor[c] || 0;
-              const pct = stats.mesEntries > 0 ? Math.round((count / stats.mesEntries) * 100) : 0;
+              const pct = stats.totalEntries > 0 ? Math.round((count / stats.totalEntries) * 100) : 0;
               return (
                 <div
                   key={c}
@@ -254,7 +326,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
                     {count}
                   </div>
                   <div className="text-[10px]" style={{ color: hex.text }}>
-                    {pct}% del mes
+                    {pct}% del período
                   </div>
                 </div>
               );
