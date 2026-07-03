@@ -51,6 +51,11 @@ export function VixoraApp() {
       if (calendarioRef.current && calendarioRef.current.contains(e.target as Node)) {
         return;
       }
+      // Si el click fue en un botón o elemento interactivo, no deseleccionar
+      const target = e.target as HTMLElement;
+      if (target.closest('button, input, select, textarea, a, [role="button"]')) {
+        return;
+      }
       // Si llegó aquí, el click fue fuera → deseleccionar
       limpiarSeleccionRango();
     };
