@@ -71,5 +71,5 @@ export const VIXORA_COLORS = {
   bg: "#f5f5f7",
 };
 
-export type VistaCalendario = "mes" | "semana";
+export type VistaCalendario = "mes" | "semana" | "año";
 export type ModoAcceso = "lector" | "editor";
