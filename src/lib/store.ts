@@ -63,6 +63,7 @@ interface AppState {
   toggleOTSeleccionada: (codigo: string) => void;
   limpiarOTsSeleccionadas: () => void;
   setSeleccionRango: (r: SeleccionRango) => void;
+  limpiarSeleccionRango: () => void;
   setLoginModalAbierto: (b: boolean) => void;
   showToast: (mensaje: string, tipo?: "ok" | "error" | "info") => void;
   login: (password: string) => Promise<boolean>;
@@ -87,6 +88,12 @@ interface AppState {
       detalle: string;
       notas: string;
     }
+  ) => Promise<boolean>;
+  cambiarEstadoRango: (
+    tecnico_id: string,
+    fechaInicio: string,
+    fechaFin: string,
+    nuevaActividad: string
   ) => Promise<boolean>;
   borrarEntrada: (tecnico_id: string, fecha: string) => Promise<boolean>;
   toggleTecnico: (tecnico_id: string, activo: boolean) => Promise<boolean>;
@@ -186,6 +193,8 @@ export const useStore = create<AppState>((set, get) => ({
     }),
   limpiarOTsSeleccionadas: () => set({ otSeleccionadas: [] }),
   setSeleccionRango: (r) => set({ seleccionRango: r }),
+  limpiarSeleccionRango: () =>
+    set({ seleccionRango: { inicio: null, fin: null, tecnico_id: null } }),
   setLoginModalAbierto: (b) => set({ loginModalAbierto: b }),
 
   showToast: (mensaje, tipo = "info") => {
@@ -239,7 +248,6 @@ export const useStore = create<AppState>((set, get) => ({
 
   guardarEntradasRango: async (tecnico_id, fechaInicio, fechaFin, data) => {
     try {
-      // Generar todas las fechas del rango
       const inicio = new Date(fechaInicio + "T00:00:00");
       const fin = new Date(fechaFin + "T00:00:00");
       const fechas: string[] = [];
@@ -249,7 +257,6 @@ export const useStore = create<AppState>((set, get) => ({
         actual.setDate(actual.getDate() + 1);
       }
 
-      // Guardar cada fecha
       let ok = true;
       for (const fecha of fechas) {
         const res = await fetch("/api/cronograma", {
@@ -272,6 +279,53 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (err) {
       get().showToast(
         err instanceof Error ? err.message : "Error al guardar rango",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  cambiarEstadoRango: async (tecnico_id, fechaInicio, fechaFin, nuevaActividad) => {
+    try {
+      const inicio = new Date(fechaInicio + "T00:00:00");
+      const fin = new Date(fechaFin + "T00:00:00");
+      const fechas: string[] = [];
+      const actual = new Date(inicio);
+      while (actual <= fin) {
+        fechas.push(formatFechaISO(actual));
+        actual.setDate(actual.getDate() + 1);
+      }
+
+      let ok = true;
+      for (const fecha of fechas) {
+        const existing = get().cronograma[`${tecnico_id}|${fecha}`];
+        const res = await fetch("/api/cronograma", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tecnico_id,
+            fecha,
+            actividad: nuevaActividad,
+            ots_asignadas: existing?.ots_asignadas ?? "—",
+            detalle: existing?.detalle ?? "—",
+            notas: existing?.notas ?? "",
+          }),
+        });
+        const json = await res.json();
+        if (!json.ok) {
+          ok = false;
+          break;
+        }
+      }
+
+      if (ok) {
+        await get().cargarDatos();
+        get().showToast(`Estado cambiado a ${nuevaActividad} en ${fechas.length} día(s)`, "ok");
+      }
+      return ok;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al cambiar estado del rango",
         "error"
       );
       return false;
