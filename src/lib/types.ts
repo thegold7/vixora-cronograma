@@ -6,19 +6,20 @@ export type ColorActividad = "rojo" | "amarillo" | "verde";
 
 export interface Tecnico {
   id: string;
-  cargo: string; // Supervisor | Especialista | Técnico
+  cargo: string;
   nombre: string;
   correo: string;
   codigo_sap: string;
-  estado: string; // Activo | Inactivo
+  estado: string;
   activo: boolean;
+  foto_url?: string; // URL de foto (opcional, columna nueva)
 }
 
 export interface OT {
   codigo: string;
   cliente: string;
   sede: string;
-  estado: string; // EN PROCESO | FINALIZADO | PENDIENTE | PERDIDO
+  estado: string;
   activo: boolean;
 }
 
@@ -32,19 +33,17 @@ export interface Actividad {
 export interface EntradaCronograma {
   id: string;
   tecnico_id: string;
-  fecha: string; // YYYY-MM-DD
-  actividad: string; // nombre exacto de la actividad
-  ots_asignadas: string; // IDs separados por coma o "—"
+  fecha: string;
+  actividad: string;
+  ots_asignadas: string;
   detalle: string;
   notas: string;
   modificado_por: string;
   fecha_modif: string;
 }
 
-/** Mapa indexado por `${tecnico_id}|${fecha}` para acceso rápido desde la UI */
 export type CronogramaMap = Record<string, EntradaCronograma>;
 
-/** Color hex por actividad para usar en la UI */
 export const COLOR_HEX: Record<ColorActividad, { bg: string; border: string; text: string; soft: string }> = {
   rojo: {
     bg: "#fdeaea",
@@ -67,9 +66,9 @@ export const COLOR_HEX: Record<ColorActividad, { bg: string; border: string; tex
 };
 
 export const VIXORA_COLORS = {
-  primary: "#E91E63",    // magenta del logo
-  dark: "#000000",       // negro del logo
-  bg: "#f5f5f7",         // gris claro de fondo
+  primary: "#E91E63",
+  dark: "#000000",
+  bg: "#f5f5f7",
 };
 
 export type VistaCalendario = "mes" | "semana";
