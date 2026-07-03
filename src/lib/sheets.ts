@@ -368,30 +368,35 @@ export async function regenerarCronogramaVisual(
   const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
   const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
-  const rows: string[][] = [];
-  let totalColumnas = 0;
+  // Fila 1: nombre del mes (solo en el día 1 de cada mes)
+  const filaMes: string[] = ["MES", "Nombre", "Cargo"];
+  // Fila 2: días con día de la semana
+  const filaDias: string[] = ["N°", "Nombre", "Cargo"];
 
   for (const mes of mesesAGenerar) {
     const last = new Date(year, mes, 0).getDate();
-    totalColumnas = Math.max(totalColumnas, 3 + last);
-
-    // Fila 1: Nombre del mes (Ej: "ENERO 2026")
-    const filaMes: string[] = [`${MESES_ES[mes - 1].toUpperCase()} ${year}`];
-    for (let i = 1; i < 3 + last; i++) filaMes.push("");
-    rows.push(filaMes);
-
-    // Fila 2: Encabezado con días (N°, Nombre, Cargo, 1 Lun, 2 Mar, ...)
-    const headerDias: string[] = ["N°", "Nombre", "Cargo"];
     for (let d = 1; d <= last; d++) {
+      // En la fila del mes, solo poner el nombre en el día 1
+      if (d === 1) {
+        filaMes.push(`${MESES_ES[mes - 1].toUpperCase()} ${year}`);
+      } else {
+        filaMes.push("");
+      }
+      // En la fila de días, poner "día DOW"
       const date = new Date(year, mes - 1, d);
-      headerDias.push(`${d} ${DOW_ES[date.getDay()]}`);
+      filaDias.push(`${d} ${DOW_ES[date.getDay()]}`);
     }
-    rows.push(headerDias);
+  }
 
-    // Filas 3 a 15: técnicos
-    for (let i = 0; i < tecnicos.length; i++) {
-      const t = tecnicos[i];
-      const row: string[] = [String(i + 1), t.nombre, t.cargo];
+  const rows: string[][] = [filaMes, filaDias];
+
+  // Filas de técnicos (3 a 15)
+  for (let i = 0; i < tecnicos.length; i++) {
+    const t = tecnicos[i];
+    const row: string[] = [String(i + 1), t.nombre, t.cargo];
+
+    for (const mes of mesesAGenerar) {
+      const last = new Date(year, mes, 0).getDate();
       for (let d = 1; d <= last; d++) {
         const iso = `${year}-${String(mes).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
         const e = map[`${t.id}|${iso}`];
@@ -434,16 +439,11 @@ export async function regenerarCronogramaVisual(
         }
         row.push(cellText);
       }
-      rows.push(row);
     }
-
-    // Fila vacía entre meses
-    if (mesesAGenerar.indexOf(mes) < mesesAGenerar.length - 1) {
-      const filaVacia: string[] = [];
-      for (let i = 0; i < 3 + last; i++) filaVacia.push("");
-      rows.push(filaVacia);
-    }
+    rows.push(row);
   }
+
+  const totalColumnas = 3 + mesesAGenerar.reduce((sum, mes) => sum + new Date(year, mes, 0).getDate(), 0);
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
@@ -461,7 +461,6 @@ export async function regenerarCronogramaVisual(
 
   return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
-
 function colToLetter(col: number): string {
   let letter = "";
   while (col > 0) {
