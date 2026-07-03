@@ -5,7 +5,6 @@ import { COLOR_HEX, type Tecnico, type Actividad, type EntradaCronograma, type C
 import { useState, useRef, useEffect } from "react";
 
 const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 const MESES_COMPLETOS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
 interface Props {
@@ -206,7 +205,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     return fecha >= inicio && fecha <= fin;
   };
 
-  // Render del contenido de celda para vista mes/semana
   const renderCellContent = (entrada: EntradaCronograma) => {
     const colorHex = getColorHex(actividades, entrada.actividad);
     return (
@@ -255,10 +253,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     );
   };
 
-  // Render del contenido de celda para vista anual (compacto pero con texto)
   const renderCellContentAño = (entrada: EntradaCronograma) => {
     const colorHex = getColorHex(actividades, entrada.actividad);
-    // Abreviatura de la actividad (primeras 3-4 letras)
     const abrev = entrada.actividad.length > 8
       ? entrada.actividad.substring(0, 4) + "."
       : entrada.actividad;
@@ -273,10 +269,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     );
   };
 
-  // Render del header de días — en vista anual con barra de mes arriba
   const renderHeader = () => {
     if (vista === "año") {
-      // Agrupar días por mes para mostrar la barra de mes
       const mesesAgrupados: { mes: number; dias: Date[] }[] = [];
       let mesActual = -1;
       let grupoActual: Date[] = [];
@@ -297,7 +291,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
 
       return (
         <>
-          {/* Fila de meses (barra superior) */}
+          {/* Fila de meses */}
           <div className="flex border-b border-gray-700" style={{ backgroundColor: "#2a2a2c" }}>
             {mesesAgrupados.map((grupo) => (
               <div
@@ -335,7 +329,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       );
     }
 
-    // Vista mes o semana
     return (
       <div className="flex" style={{ backgroundColor: "#1d1d1f" }}>
         {dias.map((d) => {
@@ -362,7 +355,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
   return (
     <div
       ref={containerRef}
-      className="overflow-auto border border-gray-200 rounded-lg bg-white"
+      className="overflow-auto border border-gray-200 rounded-lg bg-white relative"
       onMouseLeave={() => {
         if (dragSelectStart) {
           setDragSelectStart(null);
@@ -371,16 +364,15 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
         }
       }}
     >
-      {/* Header sticky — TÉCNICO + días */}
-      <div className="sticky top-0 z-20 flex" style={{ backgroundColor: "#1d1d1f" }}>
-        {/* Columna TÉCNICO fija */}
+      {/* Header sticky */}
+      <div className="sticky top-0 z-30 flex" style={{ backgroundColor: "#1d1d1f" }}>
+        {/* FIX: shrink-0 + z-40 + bg explícito para que se quede anclado */}
         <div
-          className={`sticky left-0 z-30 border-r border-gray-700 ${anchoColFija} p-2 text-xs font-semibold text-white flex items-center`}
+          className={`sticky left-0 z-40 shrink-0 border-r border-gray-700 ${anchoColFija} p-2 text-xs font-semibold text-white flex items-center`}
           style={{ backgroundColor: "#1d1d1f" }}
         >
           TÉCNICO
         </div>
-        {/* Días */}
         <div className="flex-1">
           {renderHeader()}
         </div>
@@ -392,9 +384,11 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
         </div>
       ) : (
         tecnicosVisibles.map((t, idx) => (
-          <div key={t.id} className="flex border-b border-gray-200 hover:bg-gray-50/50">
-            {/* Columna fija del técnico */}
-            <div className={`sticky left-0 z-10 bg-white border-r border-gray-200 ${anchoColFija} p-2 flex items-center gap-2`}>
+          <div key={t.id} className="flex border-b border-gray-200 hover:bg-gray-50/50 relative">
+            {/* FIX: shrink-0 + z-20 + bg-white explícito */}
+            <div
+              className={`sticky left-0 z-20 shrink-0 bg-white border-r border-gray-200 ${anchoColFija} p-2 flex items-center gap-2`}
+            >
               <div className="relative shrink-0">
                 <div className="w-10 h-12 rounded border-2 border-[#E91E63] overflow-hidden bg-gray-100 flex items-center justify-center">
                   {t.foto_url ? (
