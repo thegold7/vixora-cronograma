@@ -1,8 +1,8 @@
 "use client";
 
-import { useStore } from "@/lib/store";
+import { useStore, formatFechaISO } from "@/lib/store";
 import { COLOR_HEX } from "@/lib/types";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Plus, Eraser, RefreshCw, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Plus, Eraser, RefreshCw, ChevronDown, Trash2 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
@@ -25,6 +25,8 @@ export function Topbar() {
     limpiarSeleccionRango,
     cambiarEstadoRango,
     actividades,
+    borrarEntrada,
+    showToast,
   } = useStore();
 
   const hoy = new Date();
@@ -70,6 +72,34 @@ export function Topbar() {
     if (tieneRango) {
       abrirModalEdicion(seleccionRango.tecnico_id!, seleccionRango.inicio!, true);
     }
+  };
+
+  // NUEVO: borrar datos del rango
+  const handleBorrarRango = async () => {
+    if (!tieneRango || !seleccionRango.tecnico_id) return;
+    if (!confirm(`¿Borrar todas las asignaciones de ${seleccionRango.inicio} a ${seleccionRango.fin} para ${tecnicoRango?.nombre}?`)) return;
+
+    const inicio = new Date(seleccionRango.inicio! + "T00:00:00");
+    const fin = new Date(seleccionRango.fin! + "T00:00:00");
+    const actual = new Date(inicio);
+    let count = 0;
+
+    while (actual <= fin) {
+      const fecha = formatFechaISO(actual);
+      const existing = cronograma[`${seleccionRango.tecnico_id}|${fecha}`];
+      if (existing) {
+        await borrarEntrada(seleccionRango.tecnico_id, fecha);
+        count++;
+      }
+      actual.setDate(actual.getDate() + 1);
+    }
+
+    if (count > 0) {
+      showToast(`Borradas ${count} asignación(es)`, "ok");
+    } else {
+      showToast("No había asignaciones en el rango", "info");
+    }
+    limpiarSeleccionRango();
   };
 
   // Menú desplegable para cambiar estado
@@ -194,11 +224,21 @@ export function Topbar() {
                 )}
               </div>
 
-              {/* Botón Limpiar */}
+              {/* Botón Borrar datos del rango */}
+              <button
+                onClick={handleBorrarRango}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs border border-red-300 rounded font-semibold hover:bg-red-50 text-red-600"
+                title="Borrar todas las asignaciones del rango"
+              >
+                <Trash2 size={12} />
+                Borrar datos
+              </button>
+
+              {/* Botón Limpiar selección */}
               <button
                 onClick={limpiarSeleccionRango}
-                className="flex items-center gap-1 px-3 py-1.5 text-xs border border-gray-300 rounded font-semibold hover:bg-red-50 text-gray-700 hover:text-red-600"
-                title="Limpiar selección"
+                className="flex items-center gap-1 px-3 py-1.5 text-xs border border-gray-300 rounded font-semibold hover:bg-gray-50 text-gray-700"
+                title="Limpiar selección (no borra datos)"
               >
                 <Eraser size={12} />
                 Limpiar
