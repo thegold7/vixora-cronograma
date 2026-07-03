@@ -10,7 +10,7 @@ import { LoginModal } from "@/components/vixora/LoginModal";
 import { Toast } from "@/components/vixora/Toast";
 import { TecnicosManager } from "@/components/vixora/TecnicosManager";
 import { Estadisticas } from "@/components/vixora/Estadisticas";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Loader2 } from "lucide-react";
 
 export function VixoraApp() {
@@ -21,16 +21,45 @@ export function VixoraApp() {
     cronograma,
     modoAcceso,
     cargando,
+    actualizando,
     error,
     cargarDatos,
+    limpiarSeleccionRango,
+    seleccionRango,
+    modalEdicion,
+    loginModalAbierto,
   } = useStore();
 
   const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas">("cronograma");
+
+  // Ref para detectar clicks fuera del calendario
+  const calendarioRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     cargarDatos();
   }, [cargarDatos]);
 
+  // Click fuera del calendario → deseleccionar rango
+  // (solo si no hay modal abierto y hay selección activa)
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      // Si hay modal abierto, no hacer nada
+      if (modalEdicion?.abierto || loginModalAbierto) return;
+      // Si no hay selección, no hacer nada
+      if (!seleccionRango.inicio) return;
+      // Si el click fue dentro del calendario, no hacer nada
+      if (calendarioRef.current && calendarioRef.current.contains(e.target as Node)) {
+        return;
+      }
+      // Si llegó aquí, el click fue fuera → deseleccionar
+      limpiarSeleccionRango();
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango]);
+
+  // Pantalla de carga SOLO al inicio (cargando=true)
   if (cargando) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
@@ -58,55 +87,62 @@ export function VixoraApp() {
   }
 
   return (
-    <div className="h-screen flex bg-gray-50 overflow-hidden">
-      <SidebarLeft onNavigate={setSeccion} seccionActual={seccion} />
+    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+      {/* Indicador sutil de actualización (barra fina arriba) */}
+      {actualizando && (
+        <div className="fixed top-0 left-0 right-0 z-[60] h-1 bg-[#E91E63] animate-pulse" />
+      )}
 
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {seccion === "cronograma" && <Topbar />}
+      <div className="flex-1 flex overflow-hidden">
+        <SidebarLeft onNavigate={setSeccion} seccionActual={seccion} />
 
-        <div className="flex-1 flex min-h-0 overflow-hidden">
-          <div className="flex-1 overflow-auto">
-            {seccion === "cronograma" && (
-              <div className="p-4">
-                <Calendario
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {seccion === "cronograma" && <Topbar />}
+
+          <div className="flex-1 flex min-h-0 overflow-hidden">
+            <div className="flex-1 overflow-auto" ref={calendarioRef}>
+              {seccion === "cronograma" && (
+                <div className="p-4">
+                  <Calendario
+                    tecnicos={tecnicos}
+                    actividades={actividades}
+                    cronograma={cronograma}
+                    ots={ots}
+                    modoAcceso={modoAcceso}
+                  />
+                  {modoAcceso === "lector" && (
+                    <p className="mt-3 text-xs text-gray-400 italic">
+                      Estás en modo lector. Click en "Entrar como editor" para asignar tareas.
+                    </p>
+                  )}
+                  {modoAcceso === "editor" && (
+                    <p className="mt-3 text-xs text-gray-400 italic">
+                      💡 Click en celda para editar · Arrastra mouse para seleccionar rango · Click fuera del calendario para deseleccionar
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {seccion === "tecnicos" && (
+                <TecnicosManager tecnicos={tecnicos} modoAcceso={modoAcceso} />
+              )}
+
+              {seccion === "estadisticas" && (
+                <Estadisticas
                   tecnicos={tecnicos}
                   actividades={actividades}
                   cronograma={cronograma}
                   ots={ots}
-                  modoAcceso={modoAcceso}
                 />
-                {modoAcceso === "lector" && (
-                  <p className="mt-3 text-xs text-gray-400 italic">
-                    Estás en modo lector. Click en "Entrar como editor" para asignar tareas.
-                  </p>
-                )}
-                {modoAcceso === "editor" && (
-                  <p className="mt-3 text-xs text-gray-400 italic">
-                    💡 Click en celda para editar · Arrastra mouse horizontalmente para seleccionar rango · Shift+Click para extender · Arrastra OTs desde el panel derecho
-                  </p>
-                )}
-              </div>
-            )}
+              )}
+            </div>
 
-            {seccion === "tecnicos" && (
-              <TecnicosManager tecnicos={tecnicos} modoAcceso={modoAcceso} />
-            )}
-
-            {seccion === "estadisticas" && (
-              <Estadisticas
-                tecnicos={tecnicos}
-                actividades={actividades}
-                cronograma={cronograma}
-                ots={ots}
-              />
+            {seccion === "cronograma" && (
+              <SidebarRight ots={ots} modoAcceso={modoAcceso} />
             )}
           </div>
-
-          {seccion === "cronograma" && (
-            <SidebarRight ots={ots} modoAcceso={modoAcceso} />
-          )}
-        </div>
-      </main>
+        </main>
+      </div>
 
       <ModalEdicion actividades={actividades} ots={ots} modoAcceso={modoAcceso} />
       <LoginModal />
