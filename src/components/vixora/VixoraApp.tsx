@@ -32,7 +32,6 @@ export function VixoraApp() {
 
   const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas">("cronograma");
 
-  // Ref para detectar clicks fuera del calendario
   const calendarioRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,14 +39,10 @@ export function VixoraApp() {
   }, [cargarDatos]);
 
   // Click fuera del calendario → deseleccionar rango
-  // (solo si no hay modal abierto y hay selección activa)
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      // Si hay modal abierto, no hacer nada
       if (modalEdicion?.abierto || loginModalAbierto) return;
-      // Si no hay selección, no hacer nada
       if (!seleccionRango.inicio) return;
-      // Si el click fue dentro del calendario, no hacer nada
       if (calendarioRef.current && calendarioRef.current.contains(e.target as Node)) {
         return;
       }
@@ -56,12 +51,26 @@ export function VixoraApp() {
       if (target.closest('button, input, select, textarea, a, [role="button"]')) {
         return;
       }
-      // Si llegó aquí, el click fue fuera → deseleccionar
       limpiarSeleccionRango();
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango]);
+
+  // NUEVO: tecla Escape → deseleccionar rango
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Si hay modal abierto, no interferir (el modal maneja su propio Escape)
+      if (modalEdicion?.abierto || loginModalAbierto) return;
+      // Si es Escape y hay selección activa, deseleccionar
+      if (e.key === "Escape" && seleccionRango.inicio) {
+        limpiarSeleccionRango();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango]);
 
   // Pantalla de carga SOLO al inicio (cargando=true)
@@ -122,7 +131,7 @@ export function VixoraApp() {
                   )}
                   {modoAcceso === "editor" && (
                     <p className="mt-3 text-xs text-gray-400 italic">
-                      💡 Click en celda para editar · Arrastra mouse para seleccionar rango · Click fuera del calendario para deseleccionar
+                      💡 Click en celda para editar · Arrastra mouse para seleccionar rango · Click fuera o tecla <kbd className="px-1 bg-gray-200 rounded text-[9px]">Esc</kbd> para deseleccionar
                     </p>
                   )}
                 </div>
