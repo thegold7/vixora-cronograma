@@ -15,8 +15,9 @@ interface Props {
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
 export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) {
-  const { fechaActual, cargarDatos } = useStore();
-  // Estado separado para inputs (no aplicados) y estado aplicado
+  const { cargarDatos } = useStore();
+  // FIX: usar SIEMPRE la fecha de hoy para el mes default
+  const [hoy] = useState(() => new Date());
   const [inputInicio, setInputInicio] = useState<string>("");
   const [inputFin, setInputFin] = useState<string>("");
   const [rangoAplicado, setRangoAplicado] = useState<{ inicio: string; fin: string }>({ inicio: "", fin: "" });
@@ -44,7 +45,8 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     const total = activos.length;
 
     let entries = Object.values(cronograma);
-    let periodoLabel = `${MESES_ES[fechaActual.getMonth()]} ${fechaActual.getFullYear()}`;
+    // FIX: siempre usar el mes de hoy como default
+    let periodoLabel = `${MESES_ES[hoy.getMonth()]} ${hoy.getFullYear()}`;
     let diasPeriodo = 0;
 
     if (rangoAplicado.inicio && rangoAplicado.fin) {
@@ -57,8 +59,9 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       diasPeriodo = diff > 0 ? diff : 1;
       periodoLabel = `${rangoAplicado.inicio.split("-").reverse().join("/")} → ${rangoAplicado.fin.split("-").reverse().join("/")}`;
     } else {
-      const year = fechaActual.getFullYear();
-      const month = fechaActual.getMonth();
+      // FIX: usar hoy (no fechaActual del store)
+      const year = hoy.getFullYear();
+      const month = hoy.getMonth();
       entries = entries.filter((e) => {
         const [y, m] = e.fecha.split("-").map(Number);
         return y === year && m === month + 1;
@@ -86,7 +89,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     let enProyecto = 0;
     let enOficina = 0;
     let disponibles = 0;
-    const hoy = new Date();
     const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
     for (const t of activos) {
       const entry = cronograma[`${t.id}|${hoyIso}`];
@@ -101,7 +103,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       }
     }
 
-    // Stats por OT
     const otCount: Record<string, number> = {};
     for (const e of entries) {
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
@@ -116,7 +117,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
-    // Stats por actividad
     const actCount: Record<string, number> = {};
     for (const e of entries) {
       actCount[e.actividad] = (actCount[e.actividad] ?? 0) + 1;
@@ -125,7 +125,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       .map(([nombre, count]) => ({ nombre, count }))
       .sort((a, b) => b.count - a.count);
 
-    // Stats por día (cuántas asignaciones por fecha)
     const diaCount: Record<string, number> = {};
     for (const e of entries) {
       diaCount[e.fecha] = (diaCount[e.fecha] ?? 0) + 1;
@@ -134,7 +133,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       .map(([fecha, count]) => ({ fecha, count }))
       .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
-    // Stats por técnico (lista completa)
     const statsPorTecnicoLista = activos
       .map((t) => ({
         tecnico: t,
@@ -158,7 +156,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       statsPorTecnicoLista,
       periodoLabel,
     };
-  }, [tecnicos, cronograma, actividades, fechaActual, ots, rangoAplicado]);
+  }, [tecnicos, cronograma, actividades, ots, hoy, rangoAplicado]);
 
   const total = stats.total || 1;
   const donaPct = (n: number) => Math.round((n / total) * 100);
@@ -231,7 +229,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         )}
         {!rangoAplicado.inicio && !rangoAplicado.fin && (
           <span className="text-[10px] text-gray-400 italic">
-            (vacío = mes actual)
+            (vacío = mes actual: {MESES_ES[hoy.getMonth()]})
           </span>
         )}
       </div>
@@ -311,7 +309,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           )}
         </div>
 
-        {/* Top 10 OTs */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
           <h3 className="text-sm font-bold text-gray-700 mb-3">
             Top 10 OTs más asignadas
@@ -349,7 +346,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           )}
         </div>
 
-        {/* Distribución por color */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
           <h3 className="text-sm font-bold text-gray-700 mb-3">
             Distribución de actividades por color
@@ -380,7 +376,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           </div>
         </div>
 
-        {/* NUEVAS ESTADÍSTICAS - con tabs */}
+        {/* Estadísticas detalladas - con tabs */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h3 className="text-sm font-bold text-gray-700">
