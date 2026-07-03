@@ -37,6 +37,18 @@ function getDiasSemana(fecha: Date): Date[] {
   });
 }
 
+// NUEVO: generar los 365 días del año
+function getDiasAño(year: number): Date[] {
+  const dias: Date[] = [];
+  for (let m = 0; m < 12; m++) {
+    const last = new Date(year, m + 1, 0).getDate();
+    for (let d = 1; d <= last; d++) {
+      dias.push(new Date(year, m, d));
+    }
+  }
+  return dias;
+}
+
 // Iniciales del nombre para mostrar si no hay foto
 function getIniciales(nombre: string): string {
   const partes = nombre.trim().split(/\s+/);
@@ -64,9 +76,16 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
 
   const tecnicosVisibles = tecnicos.filter((t) => t.activo);
 
+  // Determinar qué días mostrar según la vista
   const dias = vista === "mes"
     ? getDiasMes(fechaActual.getFullYear(), fechaActual.getMonth())
-    : getDiasSemana(fechaActual);
+    : vista === "semana"
+    ? getDiasSemana(fechaActual)
+    : getDiasAño(fechaActual.getFullYear());
+
+  // Ancho de columna: más angosto en vista anual para que quepan 365 días
+  const anchoCol = vista === "año" ? "min-w-[50px] max-w-[50px]" : "min-w-[120px]";
+  const anchoColFija = vista === "año" ? "min-w-[160px]" : "min-w-[220px]";
 
   const otMap: Record<string, OT> = {};
   for (const o of ots) otMap[o.codigo] = o;
@@ -124,7 +143,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       return;
     }
     if (e.shiftKey && seleccionRango.inicio) {
-      // Extender rango solo para el mismo técnico
       const tid = seleccionRango.tecnico_id || tecnico_id;
       const inicio = seleccionRango.inicio <= fecha ? seleccionRango.inicio : fecha;
       const fin = seleccionRango.inicio <= fecha ? fecha : seleccionRango.inicio;
@@ -146,7 +164,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
   const handleCellMouseEnter = (tecnico_id: string, fecha: string) => {
     if (!dragSelectStart) return;
     const [tecStart] = dragSelectStart.split("|");
-    // SOLO extender si es la MISMA FILA (mismo técnico)
     if (tecStart === tecnico_id) {
       setDragSelectEnd(`${tecnico_id}|${fecha}`);
       setIsDragging(true);
@@ -161,7 +178,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     if (tecStart === tecnico_id && fechaStart !== fechaEnd) {
       const inicio = fechaStart <= fechaEnd ? fechaStart : fechaEnd;
       const fin = fechaStart <= fechaEnd ? fechaEnd : fechaStart;
-      // IMPORTANTE: guardar tecnico_id para que solo se pinte esta fila
       setSeleccionRango({ inicio, fin, tecnico_id: tecStart });
       setIsDragging(false);
     }
@@ -169,7 +185,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     setDragSelectEnd(null);
   };
 
-  // Verifica si una celda está en el rango seleccionado (MISMO técnico + fecha en rango)
   const isCellInRango = (tecnico_id: string, fecha: string) => {
     if (!seleccionRango.inicio) return false;
     if (seleccionRango.tecnico_id !== tecnico_id) return false;
@@ -177,7 +192,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     return fecha >= seleccionRango.inicio! && fecha <= seleccionRango.fin!;
   };
 
-  // Para el header: solo verificar fecha (sin técnico)
   const isDateInRango = (fecha: string) => {
     if (!seleccionRango.inicio) return false;
     if (!seleccionRango.fin) return fecha === seleccionRango.inicio;
@@ -192,6 +206,92 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     const inicio = fechaStart <= fechaEnd ? fechaStart : fechaEnd;
     const fin = fechaStart <= fechaEnd ? fechaEnd : fechaStart;
     return fecha >= inicio && fecha <= fin;
+  };
+
+  // Formato del header según vista
+  const getDiaLabel = (d: Date) => {
+    if (vista === "año") {
+      // En vista anual, formato compacto: "01/1"
+      return `${String(d.getDate()).padStart(2, "0")}/${d.getMonth() + 1}`;
+    }
+    return `${d.getDate()}`;
+  };
+
+  // Render del header: en vista anual, agregar separador de mes
+  const renderHeader = () => {
+    if (vista === "año") {
+      // En vista anual, agrupar por mes
+      const mesesAgrupados: { mes: number; dias: Date[] }[] = [];
+      let mesActual = -1;
+      let grupoActual: Date[] = [];
+      for (const d of dias) {
+        if (d.getMonth() !== mesActual) {
+          if (grupoActual.length > 0) {
+            mesesAgrupados.push({ mes: mesActual, dias: grupoActual });
+          }
+          mesActual = d.getMonth();
+          grupoActual = [d];
+        } else {
+          grupoActual.push(d);
+        }
+      }
+      if (grupoActual.length > 0) {
+        mesesAgrupados.push({ mes: mesActual, dias: grupoActual });
+      }
+
+      return (
+        <div className="flex" style={{ backgroundColor: "#1d1d1f" }}>
+          {mesesAgrupados.map((grupo) => {
+            const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+            return (
+              <div key={grupo.mes} className="flex border-l-2 border-[#E91E63]">
+                {grupo.dias.map((d) => {
+                  const iso = formatFechaISO(d);
+                  const inRango = isDateInRango(iso);
+                  const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                  return (
+                    <div
+                      key={iso}
+                      className={`border-r border-gray-700 ${anchoCol} text-center py-1 text-white ${
+                        isWeekend ? "opacity-70" : ""
+                      }`}
+                      style={{ backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
+                      title={`${iso} - ${DOW_ES[d.getDay()]}`}
+                    >
+                      <div className="text-[9px] font-semibold">{getDiaLabel(d)}</div>
+                      <div className="text-[8px] opacity-60">{DOW_ES[d.getDay()][0]}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // Vista mes o semana (original)
+    return (
+      <div className="flex" style={{ backgroundColor: "#1d1d1f" }}>
+        {dias.map((d) => {
+          const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+          const iso = formatFechaISO(d);
+          const inRango = isDateInRango(iso);
+          return (
+            <div
+              key={iso}
+              className={`border-r border-gray-700 ${anchoCol} text-center py-2 text-white ${
+                isWeekend ? "opacity-80" : ""
+              }`}
+              style={{ backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
+            >
+              <div className="text-xs font-semibold">{d.getDate()}</div>
+              <div className="text-[10px] opacity-70">{DOW_ES[d.getDay()]}</div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   const renderCellContent = (entrada: EntradaCronograma) => {
@@ -209,8 +309,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
             {entrada.ots_asignadas.split(",").map((cod, i) => {
               const c = cod.trim();
               const ot = otMap[c];
-              // Buscar el detalle específico de esta OT en entrada.detalle
-              // Formato detalle: "código:\ndetalle\ncódigo:\ndetalle"
               let detalleOt = "";
               if (entrada.detalle && entrada.detalle !== "—") {
                 const lineas = entrada.detalle.split("\n");
@@ -262,30 +360,12 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       {/* Header con días - negro uniforme */}
       <div className="sticky top-0 z-20 flex" style={{ backgroundColor: "#1d1d1f" }}>
         <div
-          className="sticky left-0 z-30 border-r border-gray-700 min-w-[220px] p-2 text-xs font-semibold text-white"
+          className={`sticky left-0 z-30 border-r border-gray-700 ${anchoColFija} p-2 text-xs font-semibold text-white`}
           style={{ backgroundColor: "#1d1d1f" }}
         >
           TÉCNICO
         </div>
-        <div className="flex" style={{ backgroundColor: "#1d1d1f" }}>
-          {dias.map((d) => {
-            const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-            const iso = formatFechaISO(d);
-            const inRango = isDateInRango(iso);
-            return (
-              <div
-                key={iso}
-                className={`border-r border-gray-700 min-w-[120px] text-center py-2 text-white ${
-                  isWeekend ? "opacity-80" : ""
-                }`}
-                style={{ backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
-              >
-                <div className="text-xs font-semibold">{d.getDate()}</div>
-                <div className="text-[10px] opacity-70">{DOW_ES[d.getDay()]}</div>
-              </div>
-            );
-          })}
-        </div>
+        {renderHeader()}
       </div>
 
       {tecnicosVisibles.length === 0 ? (
@@ -295,7 +375,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       ) : (
         tecnicosVisibles.map((t, idx) => (
           <div key={t.id} className="flex border-b border-gray-200 hover:bg-gray-50/50">
-            <div className="sticky left-0 z-10 bg-white border-r border-gray-200 min-w-[220px] p-2 flex items-center gap-2">
+            <div className={`sticky left-0 z-10 bg-white border-r border-gray-200 ${anchoColFija} p-2 flex items-center gap-2`}>
               {/* Marco rectangular para foto con número al borde */}
               <div className="relative shrink-0">
                 <div className="w-10 h-12 rounded border-2 border-[#E91E63] overflow-hidden bg-gray-100 flex items-center justify-center">
@@ -314,7 +394,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                     </span>
                   )}
                 </div>
-                {/* Número al borde superior izquierdo */}
                 <div className="absolute -top-1 -left-1 w-5 h-5 rounded-full bg-[#E91E63] text-white text-[9px] flex items-center justify-center font-bold border border-white">
                   {idx + 1}
                 </div>
@@ -335,6 +414,9 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                 const inRango = isCellInRango(t.id, iso);
                 const inDragRange = isCellInDragRange(t.id, iso);
 
+                // En vista anual, separador visual entre meses
+                const esPrimeroDeMes = vista === "año" && d.getDate() === 1;
+
                 return (
                   <div
                     key={iso}
@@ -344,31 +426,36 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                     onMouseDown={(e) => handleCellMouseDown(t.id, iso, e)}
                     onMouseEnter={() => handleCellMouseEnter(t.id, iso)}
                     onMouseUp={() => handleCellMouseUp(t.id, iso)}
-                    className={`border-r border-gray-200 min-w-[120px] min-h-[64px] p-1 ${
+                    className={`border-r border-gray-200 ${anchoCol} ${vista === "año" ? "min-h-[40px] p-0.5" : "min-h-[64px] p-1"} ${
                       modoAcceso === "editor" ? "cursor-pointer" : "cursor-default"
                     } transition-colors select-none ${
                       isWeekend ? "bg-gray-50" : ""
                     } ${inRango ? "ring-2 ring-[#E91E63] ring-inset bg-[#E91E63]/15" : ""} ${
                       isDragHover ? "bg-[#E91E63]/20 ring-2 ring-[#E91E63] ring-inset" : ""
-                    } ${inDragRange ? "bg-[#E91E63]/30" : ""}`}
+                    } ${inDragRange ? "bg-[#E91E63]/30" : ""} ${esPrimeroDeMes ? "border-l-2 border-l-[#E91E63]" : ""}`}
                     style={
                       colorHex && entrada && !inRango && !inDragRange
                         ? {
                             backgroundColor: colorHex.soft,
-                            borderLeft: `3px solid ${colorHex.border}`,
+                            borderLeft: esPrimeroDeMes ? `2px solid #E91E63` : `3px solid ${colorHex.border}`,
                           }
                         : undefined
                     }
                     title={
                       modoAcceso === "editor"
-                        ? "Click: editar · Arrastra mouse: rango (solo esta fila) · Shift+Click: extender · Arrastra OT aquí: asignar"
-                        : undefined
+                        ? `${iso} - ${DOW_ES[d.getDay()]} - Click: editar · Arrastra mouse: rango (solo esta fila)`
+                        : `${iso} - ${DOW_ES[d.getDay()]}`
                     }
                   >
                     {entrada ? (
-                      renderCellContent(entrada)
+                      vista === "año" ? (
+                        // En vista anual, mostrar solo el color de fondo (sin texto para que sea compacto)
+                        <div className="w-full h-full" title={`${entrada.actividad}${entrada.ots_asignadas !== "—" ? " - " + entrada.ots_asignadas : ""}`} />
+                      ) : (
+                        renderCellContent(entrada)
+                      )
                     ) : (
-                      <div className="text-[10px] text-gray-300 opacity-50">—</div>
+                      <div className="text-[10px] text-gray-300 opacity-30">·</div>
                     )}
                   </div>
                 );
