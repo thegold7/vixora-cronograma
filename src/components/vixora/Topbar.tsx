@@ -1,7 +1,9 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Plus } from "lucide-react";
+import { COLOR_HEX } from "@/lib/types";
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Plus, Eraser, RefreshCw, ChevronDown } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
 
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
@@ -18,9 +20,11 @@ export function Topbar() {
     tecnicos,
     cronograma,
     seleccionRango,
-    setSeleccionRango,
     abrirModalEdicion,
     modoAcceso,
+    limpiarSeleccionRango,
+    cambiarEstadoRango,
+    actividades,
   } = useStore();
 
   const hoy = new Date();
@@ -29,10 +33,23 @@ export function Topbar() {
   const titulo =
     vista === "mes"
       ? `${MESES_ES[fechaActual.getMonth()]} ${fechaActual.getFullYear()}`
-      : `Semana del ${formatCorto(fechaActual)}`;
+      : vista === "semana"
+      ? `Semana del ${formatCorto(fechaActual)}`
+      : `Año ${fechaActual.getFullYear()}`;
 
-  const avanzar = vista === "mes" ? avanzaMes : avanzaSemana;
-  const retroceder = vista === "mes" ? retrocedeMes : retrocedeSemana;
+  const avanzarAno = () => {
+    const d = new Date(fechaActual);
+    d.setFullYear(d.getFullYear() + 1);
+    setFechaActual(d);
+  };
+  const retrocederAno = () => {
+    const d = new Date(fechaActual);
+    d.setFullYear(d.getFullYear() - 1);
+    setFechaActual(d);
+  };
+
+  const avanzar = vista === "mes" ? avanzaMes : vista === "semana" ? avanzaSemana : avanzarAno;
+  const retroceder = vista === "mes" ? retrocedeMes : vista === "semana" ? retrocedeSemana : retrocederAno;
 
   const activos = tecnicos.filter((t) => t.activo).length;
   const totalActividades = Object.keys(cronograma).length;
@@ -52,6 +69,32 @@ export function Topbar() {
   const handleAsignarRango = () => {
     if (tieneRango) {
       abrirModalEdicion(seleccionRango.tecnico_id!, seleccionRango.inicio!, true);
+    }
+  };
+
+  // Menú desplegable para cambiar estado
+  const [menuEstadoAbierto, setMenuEstadoAbierto] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuEstadoAbierto(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handleCambiarEstado = async (nuevaActividad: string) => {
+    if (tieneRango && seleccionRango.tecnico_id) {
+      await cambiarEstadoRango(
+        seleccionRango.tecnico_id,
+        seleccionRango.inicio!,
+        seleccionRango.fin!,
+        nuevaActividad
+      );
+      setMenuEstadoAbierto(false);
     }
   };
 
@@ -83,9 +126,9 @@ export function Topbar() {
         </button>
       </div>
 
-      {/* Indicador de rango seleccionado + botón asignar */}
+      {/* Indicador de rango seleccionado + botones */}
       {tieneRango && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-2 px-3 py-1 bg-pink-50 border border-pink-200 rounded">
             <span className="text-xs font-semibold text-pink-700">
               📅 {formatearFecha(seleccionRango.inicio!)} → {formatearFecha(seleccionRango.fin!)}
@@ -98,25 +141,79 @@ export function Topbar() {
                 · {tecnicoRango.nombre}
               </span>
             )}
-            <button
-              onClick={() => setSeleccionRango({ inicio: null, fin: null, tecnico_id: null })}
-              className="text-pink-700 hover:text-pink-900 ml-1"
-              title="Limpiar rango"
-            >
-              <X size={12} />
-            </button>
           </div>
+
           {modoAcceso === "editor" && (
-            <button
-              onClick={handleAsignarRango}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded font-semibold hover:opacity-90"
-              style={{ backgroundColor: "#E91E63" }}
-              title="Asignar actividad/OTs a todo el rango"
-            >
-              <Plus size={12} />
-              Asignar a rango
-            </button>
+            <>
+              {/* Botón Asignar a rango */}
+              <button
+                onClick={handleAsignarRango}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded font-semibold hover:opacity-90"
+                style={{ backgroundColor: "#E91E63" }}
+                title="Asignar actividad/OTs a todo el rango"
+              >
+                <Plus size={12} />
+                Asignar
+              </button>
+
+              {/* Botón Cambiar estado - menú desplegable */}
+              <div className="relative" ref={menuRef}>
+                <button
+                  onClick={() => setMenuEstadoAbierto(!menuEstadoAbierto)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs border border-gray-300 rounded font-semibold hover:bg-gray-50 text-gray-700"
+                  title="Cambiar estado/actividad a todo el rango"
+                >
+                  <RefreshCw size={12} />
+                  Cambiar estado
+                  <ChevronDown size={10} />
+                </button>
+                {menuEstadoAbierto && (
+                  <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded shadow-lg z-50 min-w-[180px] max-h-96 overflow-y-auto">
+                    <div className="p-1">
+                      <div className="text-[10px] font-bold text-gray-500 uppercase px-2 py-1">
+                        Cambiar actividad a:
+                      </div>
+                      {actividades.map((a) => {
+                        const hex = COLOR_HEX[a.color as keyof typeof COLOR_HEX];
+                        return (
+                          <button
+                            key={a.codigo}
+                            onClick={() => handleCambiarEstado(a.nombre)}
+                            className="w-full text-left px-2 py-1.5 text-[11px] hover:bg-gray-100 rounded flex items-center gap-2"
+                          >
+                            <span
+                              className="w-3 h-3 rounded shrink-0"
+                              style={{ backgroundColor: hex.border }}
+                            />
+                            <span>{a.nombre}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón Limpiar */}
+              <button
+                onClick={limpiarSeleccionRango}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs border border-gray-300 rounded font-semibold hover:bg-red-50 text-gray-700 hover:text-red-600"
+                title="Limpiar selección"
+              >
+                <Eraser size={12} />
+                Limpiar
+              </button>
+            </>
           )}
+
+          {/* X para cerrar */}
+          <button
+            onClick={limpiarSeleccionRango}
+            className="text-gray-400 hover:text-red-500 ml-1"
+            title="Cerrar"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
 
@@ -132,6 +229,7 @@ export function Topbar() {
           </div>
         </div>
 
+        {/* Toggle vista: Mes / Semana / Año */}
         <div className="flex border border-gray-200 rounded overflow-hidden">
           <button
             onClick={() => setVista("mes")}
@@ -152,6 +250,16 @@ export function Topbar() {
             }`}
           >
             Semana
+          </button>
+          <button
+            onClick={() => setVista("año")}
+            className={`px-3 py-1.5 text-xs font-medium ${
+              vista === "año"
+                ? "bg-[#E91E63] text-white"
+                : "bg-white text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            Año
           </button>
         </div>
       </div>
