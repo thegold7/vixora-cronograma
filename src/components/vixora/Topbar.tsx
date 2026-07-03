@@ -74,10 +74,9 @@ export function Topbar() {
     }
   };
 
-  // NUEVO: borrar datos del rango
+  // FIX: borrar datos del rango SIN mensaje de confirmación
   const handleBorrarRango = async () => {
     if (!tieneRango || !seleccionRango.tecnico_id) return;
-    if (!confirm(`¿Borrar todas las asignaciones de ${seleccionRango.inicio} a ${seleccionRango.fin} para ${tecnicoRango?.nombre}?`)) return;
 
     const inicio = new Date(seleccionRango.inicio! + "T00:00:00");
     const fin = new Date(seleccionRango.fin! + "T00:00:00");
@@ -224,7 +223,7 @@ export function Topbar() {
                 )}
               </div>
 
-              {/* Botón Borrar datos del rango */}
+              {/* Botón Borrar datos del rango (sin confirmación) */}
               <button
                 onClick={handleBorrarRango}
                 className="flex items-center gap-1 px-3 py-1.5 text-xs border border-red-300 rounded font-semibold hover:bg-red-50 text-red-600"
