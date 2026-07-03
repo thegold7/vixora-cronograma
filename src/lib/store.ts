@@ -18,7 +18,6 @@ export interface CronogramaMap {
   [key: string]: EntradaCronograma;
 }
 
-// seleccionRango ahora incluye tecnico_id para que solo se pinte la fila
 export interface SeleccionRango {
   inicio: string | null;
   fin: string | null;
@@ -32,6 +31,7 @@ interface AppState {
   cronograma: CronogramaMap;
   modoAcceso: ModoAcceso;
   cargando: boolean;
+  actualizando: boolean; // NUEVO: para actualización silenciosa
   error: string | null;
 
   vista: VistaCalendario;
@@ -50,6 +50,7 @@ interface AppState {
   toast: { mensaje: string; tipo: "ok" | "error" | "info" } | null;
 
   cargarDatos: () => Promise<void>;
+  cargarDatosSilencioso: () => Promise<void>; // NUEVO
   setVista: (v: VistaCalendario) => void;
   setFechaActual: (d: Date) => void;
   avanzaMes: () => void;
@@ -113,6 +114,7 @@ export const useStore = create<AppState>((set, get) => ({
   cronograma: {},
   modoAcceso: "lector",
   cargando: true,
+  actualizando: false,
   error: null,
 
   vista: "mes",
@@ -125,6 +127,7 @@ export const useStore = create<AppState>((set, get) => ({
   loginModalAbierto: false,
   toast: null,
 
+  // Carga completa (con pantalla de carga) - solo al inicio
   cargarDatos: async () => {
     set({ cargando: true, error: null });
     try {
@@ -145,6 +148,31 @@ export const useStore = create<AppState>((set, get) => ({
         error: err instanceof Error ? err.message : "Error desconocido",
         cargando: false,
       });
+    }
+  },
+
+  // NUEVO: Carga silenciosa (sin pantalla de carga, solo indicador sutil)
+  cargarDatosSilencioso: async () => {
+    set({ actualizando: true });
+    try {
+      const res = await fetch("/api/data", { cache: "no-store" });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error ?? "Error al cargar datos");
+      const d = json.data;
+      set({
+        tecnicos: d.tecnicos,
+        ots: d.ots,
+        actividades: d.actividades,
+        cronograma: d.cronograma,
+        modoAcceso: d.modoAcceso,
+        actualizando: false,
+      });
+    } catch (err) {
+      set({ actualizando: false });
+      get().showToast(
+        err instanceof Error ? err.message : "Error al actualizar",
+        "error"
+      );
     }
   },
 
@@ -234,7 +262,8 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await get().cargarDatos();
+      // NUEVO: actualización silenciosa (sin pantalla de carga)
+      await get().cargarDatosSilencioso();
       get().showToast("Entrada guardada", "ok");
       return true;
     } catch (err) {
@@ -272,7 +301,7 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       if (ok) {
-        await get().cargarDatos();
+        await get().cargarDatosSilencioso();
         get().showToast(`Asignado a ${fechas.length} día(s)`, "ok");
       }
       return ok;
@@ -319,7 +348,7 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       if (ok) {
-        await get().cargarDatos();
+        await get().cargarDatosSilencioso();
         get().showToast(`Estado cambiado a ${nuevaActividad} en ${fechas.length} día(s)`, "ok");
       }
       return ok;
@@ -341,7 +370,7 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await get().cargarDatos();
+      await get().cargarDatosSilencioso();
       get().showToast("Entrada borrada", "ok");
       return true;
     } catch (err) {
@@ -362,7 +391,7 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await get().cargarDatos();
+      await get().cargarDatosSilencioso();
       get().showToast(
         `Técnico ${activo ? "activado" : "desactivado"}`,
         "ok"
@@ -412,7 +441,7 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await get().cargarDatos();
+      await get().cargarDatosSilencioso();
       get().showToast(`OT ${codigo} → ${nuevoEstado}`, "ok");
       return true;
     } catch (err) {
@@ -433,7 +462,7 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await get().cargarDatos();
+      await get().cargarDatosSilencioso();
       get().showToast(`OT ${codigo} agregada`, "ok");
       return true;
     } catch (err) {
