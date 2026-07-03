@@ -375,12 +375,12 @@ export async function regenerarCronogramaVisual(
     const last = new Date(year, mes, 0).getDate();
     totalColumnas = Math.max(totalColumnas, 3 + last);
 
-    // Fila separadora de mes: "01-ENERO-2026"
-    const filaMes: string[] = [`${String(mes).padStart(2, "0")}-${MESES_ES[mes - 1].toUpperCase()}-${year}`];
+    // Fila 1: Nombre del mes (Ej: "ENERO 2026")
+    const filaMes: string[] = [`${MESES_ES[mes - 1].toUpperCase()} ${year}`];
     for (let i = 1; i < 3 + last; i++) filaMes.push("");
     rows.push(filaMes);
 
-    // Header de días del mes
+    // Fila 2: Encabezado con días (N°, Nombre, Cargo, 1 Lun, 2 Mar, ...)
     const headerDias: string[] = ["N°", "Nombre", "Cargo"];
     for (let d = 1; d <= last; d++) {
       const date = new Date(year, mes - 1, d);
@@ -388,7 +388,7 @@ export async function regenerarCronogramaVisual(
     }
     rows.push(headerDias);
 
-    // Filas de técnicos
+    // Filas 3 a 15: técnicos
     for (let i = 0; i < tecnicos.length; i++) {
       const t = tecnicos[i];
       const row: string[] = [String(i + 1), t.nombre, t.cargo];
@@ -407,16 +407,12 @@ export async function regenerarCronogramaVisual(
             .filter(Boolean);
           for (const cod of codigos) {
             const ot = otMap[cod];
-            // Buscar el detalle específico de esta OT en e.detalle
-            // Formato detalle: "código:\ndetalle\ncódigo:\ndetalle\n"
             let detalleOt = "";
             if (e.detalle && e.detalle !== "—") {
               const lineas = e.detalle.split("\n");
               for (let li = 0; li < lineas.length; li++) {
-                const linea = lineas[li];
-                const match = linea.match(/^(\S+):$/);
+                const match = lineas[li].match(/^(\S+):$/);
                 if (match && match[1] === cod) {
-                  // La siguiente línea es el detalle
                   if (li + 1 < lineas.length) {
                     detalleOt = lineas[li + 1];
                   }
@@ -441,6 +437,7 @@ export async function regenerarCronogramaVisual(
       rows.push(row);
     }
 
+    // Fila vacía entre meses
     if (mesesAGenerar.indexOf(mes) < mesesAGenerar.length - 1) {
       const filaVacia: string[] = [];
       for (let i = 0; i < 3 + last; i++) filaVacia.push("");
