@@ -376,13 +376,11 @@ export async function regenerarCronogramaVisual(
   for (const mes of mesesAGenerar) {
     const last = new Date(year, mes, 0).getDate();
     for (let d = 1; d <= last; d++) {
-      // En la fila del mes, solo poner el nombre en el día 1
       if (d === 1) {
         filaMes.push(`${MESES_ES[mes - 1].toUpperCase()} ${year}`);
       } else {
         filaMes.push("");
       }
-      // En la fila de días, poner "día DOW"
       const date = new Date(year, mes - 1, d);
       filaDias.push(`${d} ${DOW_ES[date.getDay()]}`);
     }
