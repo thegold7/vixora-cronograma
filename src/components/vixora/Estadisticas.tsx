@@ -3,7 +3,7 @@
 import { useStore } from "@/lib/store";
 import { COLOR_HEX, type Tecnico, type Actividad, type CronogramaMap, type OT } from "@/lib/types";
 import { useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 
 interface Props {
   tecnicos: Tecnico[];
@@ -16,9 +16,12 @@ const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio"
 
 export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) {
   const { fechaActual, cargarDatos } = useStore();
-  const [rangoInicio, setRangoInicio] = useState<string>("");
-  const [rangoFin, setRangoFin] = useState<string>("");
+  // Estado separado para inputs (no aplicados) y estado aplicado
+  const [inputInicio, setInputInicio] = useState<string>("");
+  const [inputFin, setInputFin] = useState<string>("");
+  const [rangoAplicado, setRangoAplicado] = useState<{ inicio: string; fin: string }>({ inicio: "", fin: "" });
   const [actualizando, setActualizando] = useState(false);
+  const [vistaSecundaria, setVistaSecundaria] = useState<"porTecnico" | "porActividad" | "porDia">("porTecnico");
 
   const handleActualizar = async () => {
     setActualizando(true);
@@ -26,24 +29,41 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     setActualizando(false);
   };
 
+  const handleAplicarRango = () => {
+    setRangoAplicado({ inicio: inputInicio, fin: inputFin });
+  };
+
+  const handleLimpiarRango = () => {
+    setInputInicio("");
+    setInputFin("");
+    setRangoAplicado({ inicio: "", fin: "" });
+  };
+
   const stats = useMemo(() => {
     const activos = tecnicos.filter((t) => t.activo);
     const total = activos.length;
 
-    // Filtrar entradas por rango de fechas si está especificado
     let entries = Object.values(cronograma);
-    if (rangoInicio && rangoFin) {
+    let periodoLabel = `${MESES_ES[fechaActual.getMonth()]} ${fechaActual.getFullYear()}`;
+    let diasPeriodo = 0;
+
+    if (rangoAplicado.inicio && rangoAplicado.fin) {
       entries = entries.filter((e) => {
-        return e.fecha >= rangoInicio && e.fecha <= rangoFin;
+        return e.fecha >= rangoAplicado.inicio && e.fecha <= rangoAplicado.fin;
       });
+      const diff = Math.round(
+        (new Date(rangoAplicado.fin).getTime() - new Date(rangoAplicado.inicio).getTime()) / (1000 * 60 * 60 * 24)
+      ) + 1;
+      diasPeriodo = diff > 0 ? diff : 1;
+      periodoLabel = `${rangoAplicado.inicio.split("-").reverse().join("/")} → ${rangoAplicado.fin.split("-").reverse().join("/")}`;
     } else {
-      // Si no hay rango, usar mes actual
       const year = fechaActual.getFullYear();
       const month = fechaActual.getMonth();
       entries = entries.filter((e) => {
         const [y, m] = e.fecha.split("-").map(Number);
         return y === year && m === month + 1;
       });
+      diasPeriodo = new Date(year, month + 1, 0).getDate();
     }
 
     const distColor: Record<string, number> = { rojo: 0, amarillo: 0, verde: 0 };
@@ -57,17 +77,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       porTecnico[e.tecnico_id] = (porTecnico[e.tecnico_id] ?? 0) + 1;
     }
 
-    let diasPeriodo = 0;
-    if (rangoInicio && rangoFin) {
-      const diff = Math.round(
-        (new Date(rangoFin).getTime() - new Date(rangoInicio).getTime()) / (1000 * 60 * 60 * 24)
-      ) + 1;
-      diasPeriodo = diff > 0 ? diff : 1;
-    } else {
-      const year = fechaActual.getFullYear();
-      const month = fechaActual.getMonth();
-      diasPeriodo = new Date(year, month + 1, 0).getDate();
-    }
     const cargaMax = total * diasPeriodo;
     const cargaActual = entries.length;
     const cargaPct = cargaMax > 0 ? Math.round((cargaActual / cargaMax) * 100) : 0;
@@ -92,6 +101,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       }
     }
 
+    // Stats por OT
     const otCount: Record<string, number> = {};
     for (const e of entries) {
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
@@ -106,6 +116,32 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
+    // Stats por actividad
+    const actCount: Record<string, number> = {};
+    for (const e of entries) {
+      actCount[e.actividad] = (actCount[e.actividad] ?? 0) + 1;
+    }
+    const statsPorActividad = Object.entries(actCount)
+      .map(([nombre, count]) => ({ nombre, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Stats por día (cuántas asignaciones por fecha)
+    const diaCount: Record<string, number> = {};
+    for (const e of entries) {
+      diaCount[e.fecha] = (diaCount[e.fecha] ?? 0) + 1;
+    }
+    const statsPorDia = Object.entries(diaCount)
+      .map(([fecha, count]) => ({ fecha, count }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+    // Stats por técnico (lista completa)
+    const statsPorTecnicoLista = activos
+      .map((t) => ({
+        tecnico: t,
+        count: porTecnico[t.id] ?? 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
     return {
       total,
       totalEntries: entries.length,
@@ -117,8 +153,12 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       enOficina,
       disponibles,
       statsPorOt,
+      statsPorActividad,
+      statsPorDia,
+      statsPorTecnicoLista,
+      periodoLabel,
     };
-  }, [tecnicos, cronograma, actividades, fechaActual, ots, rangoInicio, rangoFin]);
+  }, [tecnicos, cronograma, actividades, fechaActual, ots, rangoAplicado]);
 
   const total = stats.total || 1;
   const donaPct = (n: number) => Math.round((n / total) * 100);
@@ -141,15 +181,11 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
   };
 
-  const periodoLabel = rangoInicio && rangoFin
-    ? `${rangoInicio.split("-").reverse().join("/")} → ${rangoFin.split("-").reverse().join("/")}`
-    : `${MESES_ES[fechaActual.getMonth()]} ${fechaActual.getFullYear()}`;
-
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold text-gray-900">
-          Estadísticas — {periodoLabel}
+          Estadísticas — {stats.periodoLabel}
         </h2>
         <button
           onClick={handleActualizar}
@@ -157,35 +193,43 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b] disabled:opacity-50"
         >
           <RefreshCw size={14} className={actualizando ? "animate-spin" : ""} />
-          {actualizando ? "Actualizando..." : "Actualizar"}
+          {actualizando ? "Actualizando..." : "Actualizar datos"}
         </button>
       </div>
 
-      {/* Selector de rango de fechas */}
+      {/* Selector de rango de fechas CON BOTÓN APLICAR */}
       <div className="mb-6 p-3 bg-white border border-gray-200 rounded-lg flex items-center gap-3 flex-wrap">
         <span className="text-xs font-semibold text-gray-700">Rango de fechas:</span>
         <input
           type="date"
-          value={rangoInicio}
-          onChange={(e) => setRangoInicio(e.target.value)}
+          value={inputInicio}
+          onChange={(e) => setInputInicio(e.target.value)}
           className="px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
         />
         <span className="text-gray-400">→</span>
         <input
           type="date"
-          value={rangoFin}
-          onChange={(e) => setRangoFin(e.target.value)}
+          value={inputFin}
+          onChange={(e) => setInputFin(e.target.value)}
           className="px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
         />
-        {(rangoInicio || rangoFin) && (
+        <button
+          onClick={handleAplicarRango}
+          disabled={!inputInicio || !inputFin}
+          className="flex items-center gap-1 px-3 py-1 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Search size={12} />
+          Aplicar
+        </button>
+        {(rangoAplicado.inicio || rangoAplicado.fin) && (
           <button
-            onClick={() => { setRangoInicio(""); setRangoFin(""); }}
+            onClick={handleLimpiarRango}
             className="text-xs text-gray-500 hover:text-red-500"
           >
             ✕ Limpiar
           </button>
         )}
-        {!rangoInicio && !rangoFin && (
+        {!rangoAplicado.inicio && !rangoAplicado.fin && (
           <span className="text-[10px] text-gray-400 italic">
             (vacío = mes actual)
           </span>
@@ -267,6 +311,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           )}
         </div>
 
+        {/* Top 10 OTs */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
           <h3 className="text-sm font-bold text-gray-700 mb-3">
             Top 10 OTs más asignadas
@@ -304,6 +349,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           )}
         </div>
 
+        {/* Distribución por color */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
           <h3 className="text-sm font-bold text-gray-700 mb-3">
             Distribución de actividades por color
@@ -332,6 +378,119 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
               );
             })}
           </div>
+        </div>
+
+        {/* NUEVAS ESTADÍSTICAS - con tabs */}
+        <div className="bg-white border border-gray-200 rounded-lg p-4 lg:col-span-2">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="text-sm font-bold text-gray-700">
+              Estadísticas detalladas
+            </h3>
+            <div className="flex gap-1 text-[10px]">
+              <button
+                onClick={() => setVistaSecundaria("porTecnico")}
+                className={`px-2 py-1 rounded font-medium ${
+                  vistaSecundaria === "porTecnico" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                Por técnico
+              </button>
+              <button
+                onClick={() => setVistaSecundaria("porActividad")}
+                className={`px-2 py-1 rounded font-medium ${
+                  vistaSecundaria === "porActividad" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                Por actividad
+              </button>
+              <button
+                onClick={() => setVistaSecundaria("porDia")}
+                className={`px-2 py-1 rounded font-medium ${
+                  vistaSecundaria === "porDia" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                Por día
+              </button>
+            </div>
+          </div>
+
+          {vistaSecundaria === "porTecnico" && (
+            <div className="space-y-1.5 max-h-96 overflow-y-auto">
+              {stats.statsPorTecnicoLista.length === 0 ? (
+                <p className="text-xs text-gray-400">Sin datos.</p>
+              ) : (
+                stats.statsPorTecnicoLista.map((item, i) => {
+                  const maxCount = stats.statsPorTecnicoLista[0].count || 1;
+                  const pct = Math.round((item.count / maxCount) * 100);
+                  return (
+                    <div key={item.tecnico.id} className="flex items-center gap-2">
+                      <div className="w-5 text-[10px] font-bold text-gray-400">{i + 1}</div>
+                      <div className="w-40 text-[11px] font-semibold text-gray-900 truncate">{item.tecnico.nombre}</div>
+                      <div className="flex-1">
+                        <div className="text-[10px] text-gray-500">{item.tecnico.cargo}</div>
+                        <div className="h-2 bg-gray-100 rounded overflow-hidden mt-0.5">
+                          <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                      <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {vistaSecundaria === "porActividad" && (
+            <div className="space-y-1.5 max-h-96 overflow-y-auto">
+              {stats.statsPorActividad.length === 0 ? (
+                <p className="text-xs text-gray-400">Sin datos.</p>
+              ) : (
+                stats.statsPorActividad.map((item, i) => {
+                  const act = actividades.find((a) => a.nombre === item.nombre);
+                  const hex = act ? COLOR_HEX[act.color] : COLOR_HEX.verde;
+                  const maxCount = stats.statsPorActividad[0].count || 1;
+                  const pct = Math.round((item.count / maxCount) * 100);
+                  return (
+                    <div key={item.nombre} className="flex items-center gap-2">
+                      <div className="w-5 text-[10px] font-bold text-gray-400">{i + 1}</div>
+                      <div className="w-32 text-[11px] font-semibold truncate" style={{ color: hex.text }}>{item.nombre}</div>
+                      <div className="flex-1">
+                        <div className="h-2 bg-gray-100 rounded overflow-hidden">
+                          <div className="h-full" style={{ width: `${pct}%`, backgroundColor: hex.border }} />
+                        </div>
+                      </div>
+                      <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {vistaSecundaria === "porDia" && (
+            <div className="space-y-1 max-h-96 overflow-y-auto">
+              {stats.statsPorDia.length === 0 ? (
+                <p className="text-xs text-gray-400">Sin datos.</p>
+              ) : (
+                stats.statsPorDia.map((item) => {
+                  const maxCount = stats.statsPorDia.length > 0 ? Math.max(...stats.statsPorDia.map((d) => d.count)) : 1;
+                  const pct = Math.round((item.count / maxCount) * 100);
+                  const [y, m, d] = item.fecha.split("-");
+                  return (
+                    <div key={item.fecha} className="flex items-center gap-2">
+                      <div className="w-24 text-[10px] font-mono text-gray-600">{d}/{m}/{y}</div>
+                      <div className="flex-1">
+                        <div className="h-2 bg-gray-100 rounded overflow-hidden">
+                          <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                      <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
