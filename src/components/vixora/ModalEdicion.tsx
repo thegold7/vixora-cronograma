@@ -2,7 +2,7 @@
 
 import { useStore } from "@/lib/store";
 import { COLOR_HEX } from "@/lib/types";
-import { X, Trash2, Save } from "lucide-react";
+import { X, Trash2, Save, Calendar } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 
 interface Props {
@@ -12,11 +12,10 @@ interface Props {
 }
 
 export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
-  const { modalEdicion, cerrarModalEdicion, guardarEntrada, borrarEntrada, cronograma, otSeleccionadas, limpiarOTsSeleccionadas, showToast, seleccionRango } = useStore();
+  const { modalEdicion, cerrarModalEdicion, guardarEntrada, guardarEntradasRango, borrarEntrada, cronograma, otSeleccionadas, limpiarOTsSeleccionadas, showToast, seleccionRango, setSeleccionRango, tecnicos } = useStore();
 
   const [actividad, setActividad] = useState("");
   const [otsSel, setOtsSel] = useState<string[]>([]);
-  // detallesPorOt: mapa de codigo OT -> detalle ingresado por el usuario
   const [detallesPorOt, setDetallesPorOt] = useState<Record<string, string>>({});
   const [notas, setNotas] = useState("");
   const [query, setQuery] = useState("");
@@ -33,16 +32,24 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
         ? existente.ots_asignadas.split(",").map((s) => s.trim()).filter(Boolean)
         : [];
       setOtsSel(existOts);
-      // Si hay un detalle existente, intentar parsearlo: cada OT puede tener su propio detalle
-      // Formato esperado: "621236 - detalle1\n621237 - detalle2"
+      // Parsear detalle con formato: "código:\ndetalle\ncódigo:\ndetalle"
       const detallesIniciales: Record<string, string> = {};
       if (existente.detalle && existente.detalle !== "—") {
-        const lineas = existente.detalle.split("\n").filter((l) => l.trim());
-        for (const linea of lineas) {
-          // Si la línea empieza con "código -", separar
-          const match = linea.match(/^(\S+)\s*-\s*(.+)$/);
+        const lineas = existente.detalle.split("\n");
+        let i = 0;
+        while (i < lineas.length) {
+          const match = lineas[i].match(/^(\S+):$/);
           if (match) {
-            detallesIniciales[match[1]] = match[2];
+            const cod = match[1];
+            if (i + 1 < lineas.length) {
+              detallesIniciales[cod] = lineas[i + 1];
+              i += 2;
+            } else {
+              detallesIniciales[cod] = "";
+              i += 1;
+            }
+          } else {
+            i += 1;
           }
         }
       }
@@ -54,7 +61,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
       setDetallesPorOt({});
       setNotas("");
     }
-    // Si hay OTs seleccionadas en el store (vía drag o panel), agregarlas
     if (otSeleccionadas.length > 0) {
       setOtsSel((prev) => Array.from(new Set([...prev, ...otSeleccionadas])));
     }
@@ -77,13 +83,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modalEdicion]);
 
-  const enRango =
-    seleccionRango.inicio &&
-    seleccionRango.fin &&
-    modalEdicion?.fecha &&
-    modalEdicion.fecha >= seleccionRango.inicio &&
-    modalEdicion.fecha <= seleccionRango.fin;
-
   const otsFiltradas = useMemo(() => {
     if (!query) return ots;
     const q = query.toLowerCase();
@@ -105,21 +104,32 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     year: "numeric",
   });
 
+  // Info del técnico
+  const tecnico = tecnicos.find((t) => t.id === modalEdicion.tecnico_id);
+
+  // Si es asignación a rango, calcular fechas
+  const esRango = modalEdicion.aplicarARango && seleccionRango.inicio && seleccionRango.fin;
+  const rangoDias = esRango
+    ? Math.round(
+        (new Date(seleccionRango.fin!).getTime() - new Date(seleccionRango.inicio!).getTime()) /
+          (1000 * 60 * 60 * 24)
+      ) + 1
+    : 0;
+
   const handleToggleOT = (codigo: string) => {
     setOtsSel((prev) =>
       prev.includes(codigo) ? prev.filter((c) => c !== codigo) : [...prev, codigo]
     );
   };
 
-  // Construir el detalle final a partir de los detallesPorOt
-  // Formato: cada OT en su propia línea con "código - detalle"
+  // Construir el detalle final con formato: "código:\ndetalle\ncódigo:\ndetalle"
   const construirDetalle = () => {
     if (otsSel.length === 0) return "—";
-    const lineas = otsSel.map((cod) => {
+    const bloques = otsSel.map((cod) => {
       const detalle = detallesPorOt[cod]?.trim() || "";
-      return detalle ? `${cod} - ${detalle}` : cod;
+      return `${cod}:\n${detalle}`;
     });
-    return lineas.join("\n");
+    return bloques.join("\n");
   };
 
   const handleGuardar = async () => {
@@ -130,12 +140,30 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     setGuardando(true);
     const ots_str = otsSel.length > 0 ? otsSel.join(", ") : "—";
     const detalleFinal = construirDetalle();
-    await guardarEntrada(modalEdicion.tecnico_id!, modalEdicion.fecha!, {
-      actividad,
-      ots_asignadas: ots_str,
-      detalle: detalleFinal,
-      notas,
-    });
+    
+    if (esRango && seleccionRango.tecnico_id) {
+      // Guardar en todo el rango
+      await guardarEntradasRango(
+        seleccionRango.tecnico_id,
+        seleccionRango.inicio!,
+        seleccionRango.fin!,
+        {
+          actividad,
+          ots_asignadas: ots_str,
+          detalle: detalleFinal,
+          notas,
+        }
+      );
+      // Limpiar rango después de asignar
+      setSeleccionRango({ inicio: null, fin: null, tecnico_id: null });
+    } else {
+      await guardarEntrada(modalEdicion.tecnico_id!, modalEdicion.fecha!, {
+        actividad,
+        ots_asignadas: ots_str,
+        detalle: detalleFinal,
+        notas,
+      });
+    }
     setGuardando(false);
     handleClose();
   };
@@ -166,12 +194,18 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
         >
           <div>
             <div className="text-[10px] opacity-80 uppercase tracking-wider">
-              Editar asignación
+              {esRango ? "Asignar a rango" : "Editar asignación"}
             </div>
             <div className="text-sm font-bold capitalize">{fechaStr}</div>
-            {enRango && (
+            {tecnico && (
               <div className="text-[10px] mt-0.5 opacity-90">
-                📍 En rango seleccionado ({seleccionRango.inicio} → {seleccionRango.fin})
+                👤 {tecnico.nombre}
+              </div>
+            )}
+            {esRango && (
+              <div className="text-[10px] mt-0.5 opacity-90 flex items-center gap-1">
+                <Calendar size={10} />
+                Rango: {seleccionRango.inicio} → {seleccionRango.fin} ({rangoDias} días)
               </div>
             )}
           </div>
@@ -276,7 +310,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
                 Detalle por OT
               </label>
               <p className="text-[10px] text-gray-400 mb-2">
-                Ingresa el detalle/actividad para cada OT seleccionada. Solo el código se guarda si dejas la caja vacía.
+                Ingresa el detalle/actividad para cada OT. Formato final:
               </p>
               <div className="space-y-2">
                 {otsSel.map((cod) => {
@@ -284,7 +318,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
                   return (
                     <div key={cod} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
                       <div className="text-xs font-bold text-gray-900 w-24 shrink-0 mt-1.5">
-                        {cod}
+                        {cod}:
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-[10px] text-gray-500 mb-1">
@@ -296,7 +330,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
                           onChange={(e) =>
                             setDetallesPorOt((prev) => ({ ...prev, [cod]: e.target.value }))
                           }
-                          placeholder="Ej: CURSO, DOCUMENTACIÓN, etc."
+                          placeholder="Ej: Documentos, CURSO, etc."
                           className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
                         />
                       </div>
@@ -331,7 +365,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
 
         <div className="border-t border-gray-200 p-3 flex items-center justify-between gap-2">
           <div>
-            {cronograma[`${modalEdicion.tecnico_id}|${modalEdicion.fecha}`] && (
+            {!esRango && cronograma[`${modalEdicion.tecnico_id}|${modalEdicion.fecha}`] && (
               <button
                 onClick={handleBorrar}
                 disabled={guardando}
@@ -357,7 +391,7 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
               style={{ backgroundColor: "#E91E63" }}
             >
               <Save size={14} />
-              {guardando ? "Guardando..." : "Guardar"}
+              {guardando ? "Guardando..." : esRango ? `Guardar en ${rangoDias} días` : "Guardar"}
             </button>
           </div>
         </div>
