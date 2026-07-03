@@ -73,7 +73,7 @@ export async function getTecnicos(): Promise<Tecnico[]> {
     codigo_sap: r[4] ?? "",
     estado: r[5] ?? "Activo",
     activo: (r[6] ?? "TRUE").toUpperCase() === "TRUE",
-    foto_url: r[7] ?? "", // columna H: URL de foto (opcional)
+    foto_url: r[7] ?? "",
   }));
 }
 
@@ -346,8 +346,11 @@ export async function addOt(
 }
 
 // ============================================================
-// REGENERAR CRONOGRAMA_VISUAL (matriz con separadores de mes)
-// Formato detalle: "código:\ndetalle\n" por cada OT
+// REGENERAR CRONOGRAMA_VISUAL
+// Formato: UNA SOLA TABLA con 365 días
+//   Fila 1: "MES" | "Nombre" | "Cargo" | "ENERO 2026" | "" | ... | "FEBRERO 2026" | "" | ...
+//   Fila 2: "N°" | "Nombre" | "Cargo" | "1 Jue" | "2 Vie" | ... | "1 Dom" | "2 Lun" | ... (365 días)
+//   Filas 3-15: técnicos con sus asignaciones
 // ============================================================
 export async function regenerarCronogramaVisual(
   year: number,
@@ -376,11 +379,13 @@ export async function regenerarCronogramaVisual(
   for (const mes of mesesAGenerar) {
     const last = new Date(year, mes, 0).getDate();
     for (let d = 1; d <= last; d++) {
+      // En la fila del mes, solo poner el nombre en el día 1
       if (d === 1) {
         filaMes.push(`${MESES_ES[mes - 1].toUpperCase()} ${year}`);
       } else {
         filaMes.push("");
       }
+      // En la fila de días, poner "día DOW"
       const date = new Date(year, mes - 1, d);
       filaDias.push(`${d} ${DOW_ES[date.getDay()]}`);
     }
@@ -441,7 +446,11 @@ export async function regenerarCronogramaVisual(
     rows.push(row);
   }
 
-  const totalColumnas = 3 + mesesAGenerar.reduce((sum, mes) => sum + new Date(year, mes, 0).getDate(), 0);
+  // Total columnas = 3 fijas + suma de días de todos los meses
+  const totalColumnas = 3 + mesesAGenerar.reduce(
+    (sum, mes) => sum + new Date(year, mes, 0).getDate(),
+    0
+  );
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
@@ -459,6 +468,7 @@ export async function regenerarCronogramaVisual(
 
   return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
+
 function colToLetter(col: number): string {
   let letter = "";
   while (col > 0) {
