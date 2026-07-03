@@ -18,6 +18,13 @@ export interface CronogramaMap {
   [key: string]: EntradaCronograma;
 }
 
+// seleccionRango ahora incluye tecnico_id para que solo se pinte la fila
+export interface SeleccionRango {
+  inicio: string | null;
+  fin: string | null;
+  tecnico_id: string | null;
+}
+
 interface AppState {
   tecnicos: Tecnico[];
   ots: OT[];
@@ -29,13 +36,14 @@ interface AppState {
 
   vista: VistaCalendario;
   fechaActual: Date;
-  seleccionRango: { inicio: string | null; fin: string | null };
+  seleccionRango: SeleccionRango;
   mostrarDetalles: boolean;
   sidebarDerechaVisible: boolean;
   modalEdicion: {
     abierto: boolean;
     tecnico_id: string | null;
     fecha: string | null;
+    aplicarARango: boolean;
   } | null;
   otSeleccionadas: string[];
   loginModalAbierto: boolean;
@@ -50,11 +58,11 @@ interface AppState {
   retrocedeSemana: () => void;
   toggleMostrarDetalles: () => void;
   toggleSidebarDerecha: () => void;
-  abrirModalEdicion: (tecnico_id: string, fecha: string) => void;
+  abrirModalEdicion: (tecnico_id: string, fecha: string, aplicarARango?: boolean) => void;
   cerrarModalEdicion: () => void;
   toggleOTSeleccionada: (codigo: string) => void;
   limpiarOTsSeleccionadas: () => void;
-  setSeleccionRango: (r: { inicio: string | null; fin: string | null }) => void;
+  setSeleccionRango: (r: SeleccionRango) => void;
   setLoginModalAbierto: (b: boolean) => void;
   showToast: (mensaje: string, tipo?: "ok" | "error" | "info") => void;
   login: (password: string) => Promise<boolean>;
@@ -62,6 +70,17 @@ interface AppState {
   guardarEntrada: (
     tecnico_id: string,
     fecha: string,
+    data: {
+      actividad: string;
+      ots_asignadas: string;
+      detalle: string;
+      notas: string;
+    }
+  ) => Promise<boolean>;
+  guardarEntradasRango: (
+    tecnico_id: string,
+    fechaInicio: string,
+    fechaFin: string,
     data: {
       actividad: string;
       ots_asignadas: string;
@@ -91,7 +110,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   vista: "mes",
   fechaActual: new Date(),
-  seleccionRango: { inicio: null, fin: null },
+  seleccionRango: { inicio: null, fin: null, tecnico_id: null },
   mostrarDetalles: true,
   sidebarDerechaVisible: true,
   modalEdicion: null,
@@ -152,8 +171,8 @@ export const useStore = create<AppState>((set, get) => ({
   toggleSidebarDerecha: () =>
     set((s) => ({ sidebarDerechaVisible: !s.sidebarDerechaVisible })),
 
-  abrirModalEdicion: (tecnico_id, fecha) =>
-    set({ modalEdicion: { abierto: true, tecnico_id, fecha } }),
+  abrirModalEdicion: (tecnico_id, fecha, aplicarARango = false) =>
+    set({ modalEdicion: { abierto: true, tecnico_id, fecha, aplicarARango } }),
   cerrarModalEdicion: () => set({ modalEdicion: null }),
 
   toggleOTSeleccionada: (codigo) =>
@@ -212,6 +231,47 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (err) {
       get().showToast(
         err instanceof Error ? err.message : "Error al guardar",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  guardarEntradasRango: async (tecnico_id, fechaInicio, fechaFin, data) => {
+    try {
+      // Generar todas las fechas del rango
+      const inicio = new Date(fechaInicio + "T00:00:00");
+      const fin = new Date(fechaFin + "T00:00:00");
+      const fechas: string[] = [];
+      const actual = new Date(inicio);
+      while (actual <= fin) {
+        fechas.push(formatFechaISO(actual));
+        actual.setDate(actual.getDate() + 1);
+      }
+
+      // Guardar cada fecha
+      let ok = true;
+      for (const fecha of fechas) {
+        const res = await fetch("/api/cronograma", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tecnico_id, fecha, ...data }),
+        });
+        const json = await res.json();
+        if (!json.ok) {
+          ok = false;
+          break;
+        }
+      }
+
+      if (ok) {
+        await get().cargarDatos();
+        get().showToast(`Asignado a ${fechas.length} día(s)`, "ok");
+      }
+      return ok;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al guardar rango",
         "error"
       );
       return false;
