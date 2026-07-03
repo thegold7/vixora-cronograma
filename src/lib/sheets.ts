@@ -348,8 +348,8 @@ export async function addOt(
 // ============================================================
 // REGENERAR CRONOGRAMA_VISUAL
 // Formato: UNA SOLA TABLA con 365 días
-//   Fila 1: "MES" | "Nombre" | "Cargo" | "ENERO 2026" | "" | ... | "FEBRERO 2026" | "" | ...
-//   Fila 2: "N°" | "Nombre" | "Cargo" | "1 Jue" | "2 Vie" | ... | "1 Dom" | "2 Lun" | ... (365 días)
+//   Fila 1: "MES" | "Nombre" | "Cargo" | "ENERO 2026" | "" | ... | "FEBRERO 2026" | ...
+//   Fila 2: "N°" | "Nombre" | "Cargo" | "01/1 - Jueves" | "02/1 - Viernes" | ... (365 días)
 //   Filas 3-15: técnicos con sus asignaciones
 // ============================================================
 export async function regenerarCronogramaVisual(
@@ -467,6 +467,7 @@ export async function regenerarCronogramaVisual(
 
   return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
+
 function colToLetter(col: number): string {
   let letter = "";
   while (col > 0) {
