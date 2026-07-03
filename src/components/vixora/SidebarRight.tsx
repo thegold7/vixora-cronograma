@@ -22,6 +22,7 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
     showToast,
     sidebarDerechaVisible,
     toggleSidebarDerecha,
+    tecnicos,
   } = useStore();
 
   const [query, setQuery] = useState("");
@@ -76,9 +77,12 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
     );
   }
 
+  // Info del técnico del rango seleccionado
+  const tieneRango = seleccionRango.inicio && seleccionRango.fin && seleccionRango.tecnico_id;
+  const tecnicoRango = tieneRango ? tecnicos.find((t) => t.id === seleccionRango.tecnico_id) : null;
+
   return (
     <aside className="w-64 shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col h-full">
-      {/* Header con botón de cerrar */}
       <div className="p-3 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
         <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">
           Gestión Asign.
@@ -92,17 +96,22 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         </button>
       </div>
 
-      {/* Rango seleccionado visible */}
-      {seleccionRango.inicio && seleccionRango.fin && (
+      {/* Rango seleccionado visible (con tecnico_id) */}
+      {tieneRango && (
         <div className="p-2 bg-pink-50 border-b border-pink-200 shrink-0">
           <div className="text-[10px] font-bold text-pink-700 uppercase">
-            📅 {formatearFechaCorta(seleccionRango.inicio)} → {formatearFechaCorta(seleccionRango.fin)}
+            📅 {formatearFechaCorta(seleccionRango.inicio!)} → {formatearFechaCorta(seleccionRango.fin!)}
           </div>
+          {tecnicoRango && (
+            <div className="text-[10px] text-pink-700 mt-0.5">
+              👤 {tecnicoRango.nombre}
+            </div>
+          )}
           <div className="text-[10px] text-pink-700 mt-0.5">
             {otSeleccionadas.length} OT(s) seleccionada(s)
           </div>
           <button
-            onClick={() => setSeleccionRango({ inicio: null, fin: null })}
+            onClick={() => setSeleccionRango({ inicio: null, fin: null, tecnico_id: null })}
             className="mt-0.5 text-[10px] text-pink-700 hover:underline"
           >
             ✕ Limpiar rango
@@ -110,7 +119,6 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         </div>
       )}
 
-      {/* Búsqueda */}
       <div className="p-2 border-b border-gray-200 bg-white shrink-0">
         <div className="relative">
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -124,7 +132,6 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         </div>
       </div>
 
-      {/* Filtros estado */}
       <div className="p-2 border-b border-gray-200 bg-white flex gap-1 shrink-0">
         <FilterChip
           active={filtroEstado === "todos"}
@@ -146,7 +153,6 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         />
       </div>
 
-      {/* Seleccionar todas + agregar nueva */}
       <div className="px-2 py-1.5 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
         <button
           onClick={seleccionarTodas}
@@ -175,7 +181,6 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         )}
       </div>
 
-      {/* Form nueva OT */}
       {mostrarFormNueva && modoAcceso === "editor" && (
         <div className="p-2 border-b border-gray-200 bg-pink-50 space-y-1 shrink-0">
           <input
@@ -227,7 +232,6 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         </div>
       )}
 
-      {/* Lista de OTs - con scroll interno limitado */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {otsFiltradas.length === 0 ? (
           <div className="p-4 text-center text-xs text-gray-400">
@@ -314,7 +318,6 @@ export function SidebarRight({ ots, modoAcceso }: Props) {
         )}
       </div>
 
-      {/* Footer informativo */}
       <div className="p-1.5 border-t border-gray-200 bg-white text-[10px] text-gray-400 text-center shrink-0">
         {otsFiltradas.length} OT(s)
       </div>
