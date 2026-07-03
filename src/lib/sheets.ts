@@ -62,7 +62,7 @@ async function readSheet<T>(
 }
 
 // ============================================================
-// LECTURA — TÉCNICOS
+// LECTURA — TÉCNICOS (incluye foto_url)
 // ============================================================
 export async function getTecnicos(): Promise<Tecnico[]> {
   return readSheet("Tecnicos", (r) => ({
@@ -73,6 +73,7 @@ export async function getTecnicos(): Promise<Tecnico[]> {
     codigo_sap: r[4] ?? "",
     estado: r[5] ?? "Activo",
     activo: (r[6] ?? "TRUE").toUpperCase() === "TRUE",
+    foto_url: r[7] ?? "", // columna H: URL de foto (opcional)
   }));
 }
 
@@ -112,7 +113,7 @@ export async function getActividades(): Promise<Actividad[]> {
 }
 
 // ============================================================
-// LECTURA — CRONOGRAMA (hoja oculta _Cronograma_Datos)
+// LECTURA — CRONOGRAMA
 // ============================================================
 export async function getCronograma(): Promise<EntradaCronograma[]> {
   return readSheet("_Cronograma_Datos", (r) => ({
@@ -128,10 +129,6 @@ export async function getCronograma(): Promise<EntradaCronograma[]> {
   }));
 }
 
-/**
- * Devuelve el cronograma en formato mapa indexado por `${tecnico_id}|${fecha}`
- * para acceso O(1) desde la UI.
- */
 export async function getCronogramaMap(): Promise<
   Record<string, EntradaCronograma>
 > {
@@ -162,11 +159,6 @@ async function getNextId(): Promise<string> {
   return `C${String(max + 1).padStart(4, "0")}`;
 }
 
-/**
- * Crea o actualiza una entrada del cronograma.
- * Si ya existe una entrada para (tecnico_id, fecha), la actualiza in-place.
- * Si no existe, agrega una nueva fila al final.
- */
 export async function upsertEntradaCronograma(
   params: {
     tecnico_id: string;
@@ -241,10 +233,6 @@ export async function upsertEntradaCronograma(
   }
 }
 
-/**
- * Elimina una entrada del cronograma (cuando se borra una celda).
- * Estrategia: reescribimos toda la hoja sin la fila eliminada.
- */
 export async function deleteEntradaCronograma(
   tecnico_id: string,
   fecha: string
@@ -310,13 +298,6 @@ export async function toggleTecnicoActivo(
 // ============================================================
 // ESCRITURA — OTs (cambiar estado y agregar nuevas)
 // ============================================================
-
-/**
- * Cambia el estado de una OT (EN PROCESO → FINALIZADO, etc.)
- * También actualiza la columna "activo":
- *   - FINALIZADO o PERDIDO → activo = FALSE
- *   - EN PROCESO o PENDIENTE → activo = TRUE
- */
 export async function updateOtEstado(
   codigo: string,
   nuevoEstado: string
@@ -338,9 +319,6 @@ export async function updateOtEstado(
   return { ok: true };
 }
 
-/**
- * Agrega una nueva OT al final de la hoja OTs.
- */
 export async function addOt(
   codigo: string,
   cliente: string,
@@ -369,6 +347,7 @@ export async function addOt(
 
 // ============================================================
 // REGENERAR CRONOGRAMA_VISUAL (matriz con separadores de mes)
+// Formato detalle: "código:\ndetalle\n" por cada OT
 // ============================================================
 export async function regenerarCronogramaVisual(
   year: number,
@@ -428,26 +407,30 @@ export async function regenerarCronogramaVisual(
             .filter(Boolean);
           for (const cod of codigos) {
             const ot = otMap[cod];
-            if (ot) {
-              let detalleOt = "";
-              if (e.detalle && e.detalle !== "—") {
-                const lineas = e.detalle.split("\n");
-                for (const linea of lineas) {
-                  const match = linea.match(/^(\S+)\s*-\s*(.+)$/);
-                  if (match && match[1] === cod) {
-                    detalleOt = match[2];
-                    break;
+            // Buscar el detalle específico de esta OT en e.detalle
+            // Formato detalle: "código:\ndetalle\ncódigo:\ndetalle\n"
+            let detalleOt = "";
+            if (e.detalle && e.detalle !== "—") {
+              const lineas = e.detalle.split("\n");
+              for (let li = 0; li < lineas.length; li++) {
+                const linea = lineas[li];
+                const match = linea.match(/^(\S+):$/);
+                if (match && match[1] === cod) {
+                  // La siguiente línea es el detalle
+                  if (li + 1 < lineas.length) {
+                    detalleOt = lineas[li + 1];
                   }
+                  break;
                 }
               }
-              if (detalleOt) {
-                cellText += `\n${cod} - ${detalleOt}`;
-              } else {
-                const desc = `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim();
-                cellText += `\n${cod} - ${desc}`;
-              }
+            }
+            if (detalleOt) {
+              cellText += `\n${cod}:\n${detalleOt}`;
+            } else if (ot) {
+              const desc = `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim();
+              cellText += `\n${cod}:\n${desc}`;
             } else {
-              cellText += `\n${cod}`;
+              cellText += `\n${cod}:`;
             }
           }
         } else if (e.detalle && e.detalle !== "—") {
@@ -458,7 +441,6 @@ export async function regenerarCronogramaVisual(
       rows.push(row);
     }
 
-    // Fila vacía entre meses
     if (mesesAGenerar.indexOf(mes) < mesesAGenerar.length - 1) {
       const filaVacia: string[] = [];
       for (let i = 0; i < 3 + last; i++) filaVacia.push("");
