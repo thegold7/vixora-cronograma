@@ -368,26 +368,26 @@ export async function regenerarCronogramaVisual(
 
   const mesesAGenerar: number[] = month ? [month] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
-  const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+  // Días de la semana completos en español
+  const DOW_COMPLETO = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
   const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
   // Fila 1: nombre del mes (solo en el día 1 de cada mes)
   const filaMes: string[] = ["MES", "Nombre", "Cargo"];
-  // Fila 2: días con día de la semana
+  // Fila 2: días con formato "DD/M - DiaSemana" (ej: "01/1 - Jueves")
   const filaDias: string[] = ["N°", "Nombre", "Cargo"];
 
   for (const mes of mesesAGenerar) {
     const last = new Date(year, mes, 0).getDate();
     for (let d = 1; d <= last; d++) {
-      // En la fila del mes, solo poner el nombre en el día 1
       if (d === 1) {
         filaMes.push(`${MESES_ES[mes - 1].toUpperCase()} ${year}`);
       } else {
         filaMes.push("");
       }
-      // En la fila de días, poner "día DOW"
       const date = new Date(year, mes - 1, d);
-      filaDias.push(`${d} ${DOW_ES[date.getDay()]}`);
+      // Formato: "01/1 - Jueves" (día/mes - día de la semana completo)
+      filaDias.push(`${String(d).padStart(2, "0")}/${mes} - ${DOW_COMPLETO[date.getDay()]}`);
     }
   }
 
@@ -446,7 +446,6 @@ export async function regenerarCronogramaVisual(
     rows.push(row);
   }
 
-  // Total columnas = 3 fijas + suma de días de todos los meses
   const totalColumnas = 3 + mesesAGenerar.reduce(
     (sum, mes) => sum + new Date(year, mes, 0).getDate(),
     0
@@ -468,7 +467,6 @@ export async function regenerarCronogramaVisual(
 
   return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
-
 function colToLetter(col: number): string {
   let letter = "";
   while (col > 0) {
