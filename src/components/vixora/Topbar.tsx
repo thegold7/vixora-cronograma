@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Plus } from "lucide-react";
 
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
@@ -19,6 +19,8 @@ export function Topbar() {
     cronograma,
     seleccionRango,
     setSeleccionRango,
+    abrirModalEdicion,
+    modoAcceso,
   } = useStore();
 
   const hoy = new Date();
@@ -35,13 +37,23 @@ export function Topbar() {
   const activos = tecnicos.filter((t) => t.activo).length;
   const totalActividades = Object.keys(cronograma).length;
 
-  const tieneRango = seleccionRango.inicio && seleccionRango.fin;
+  const tieneRango = seleccionRango.inicio && seleccionRango.fin && seleccionRango.tecnico_id;
   const rangoDias = tieneRango
     ? Math.round(
         (new Date(seleccionRango.fin!).getTime() - new Date(seleccionRango.inicio!).getTime()) /
           (1000 * 60 * 60 * 24)
       ) + 1
     : 0;
+
+  const tecnicoRango = tieneRango
+    ? tecnicos.find((t) => t.id === seleccionRango.tecnico_id)
+    : null;
+
+  const handleAsignarRango = () => {
+    if (tieneRango) {
+      abrirModalEdicion(seleccionRango.tecnico_id!, seleccionRango.inicio!, true);
+    }
+  };
 
   return (
     <header className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between gap-4 flex-wrap">
@@ -71,21 +83,40 @@ export function Topbar() {
         </button>
       </div>
 
+      {/* Indicador de rango seleccionado + botón asignar */}
       {tieneRango && (
-        <div className="flex items-center gap-2 px-3 py-1 bg-pink-50 border border-pink-200 rounded">
-          <span className="text-xs font-semibold text-pink-700">
-            📅 Rango: {formatearFecha(seleccionRango.inicio!)} → {formatearFecha(seleccionRango.fin!)}
-          </span>
-          <span className="text-[10px] text-pink-600">
-            ({rangoDias} día{rangoDias !== 1 ? "s" : ""})
-          </span>
-          <button
-            onClick={() => setSeleccionRango({ inicio: null, fin: null })}
-            className="text-pink-700 hover:text-pink-900"
-            title="Limpiar rango"
-          >
-            <X size={12} />
-          </button>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 px-3 py-1 bg-pink-50 border border-pink-200 rounded">
+            <span className="text-xs font-semibold text-pink-700">
+              📅 {formatearFecha(seleccionRango.inicio!)} → {formatearFecha(seleccionRango.fin!)}
+            </span>
+            <span className="text-[10px] text-pink-600">
+              ({rangoDias} día{rangoDias !== 1 ? "s" : ""})
+            </span>
+            {tecnicoRango && (
+              <span className="text-[10px] text-pink-700 font-medium hidden md:inline">
+                · {tecnicoRango.nombre}
+              </span>
+            )}
+            <button
+              onClick={() => setSeleccionRango({ inicio: null, fin: null, tecnico_id: null })}
+              className="text-pink-700 hover:text-pink-900 ml-1"
+              title="Limpiar rango"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          {modoAcceso === "editor" && (
+            <button
+              onClick={handleAsignarRango}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded font-semibold hover:opacity-90"
+              style={{ backgroundColor: "#E91E63" }}
+              title="Asignar actividad/OTs a todo el rango"
+            >
+              <Plus size={12} />
+              Asignar a rango
+            </button>
+          )}
         </div>
       )}
 
