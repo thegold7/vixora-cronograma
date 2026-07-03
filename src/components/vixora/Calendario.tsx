@@ -81,8 +81,9 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     ? getDiasSemana(fechaActual)
     : getDiasAño(fechaActual.getFullYear());
 
-  const anchoCol = vista === "año" ? "min-w-[50px] max-w-[50px]" : "min-w-[120px]";
-  const anchoColFija = vista === "año" ? "min-w-[160px]" : "min-w-[220px]";
+  // Anchos según vista
+  const anchoColDia = vista === "año" ? 50 : 120;
+  const anchoColFija = vista === "año" ? 160 : 220;
 
   const otMap: Record<string, OT> = {};
   for (const o of ots) otMap[o.codigo] = o;
@@ -269,8 +270,10 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     );
   };
 
+  // Render del header de días
   const renderHeader = () => {
     if (vista === "año") {
+      // Agrupar días por mes
       const mesesAgrupados: { mes: number; dias: Date[] }[] = [];
       let mesActual = -1;
       let grupoActual: Date[] = [];
@@ -292,19 +295,19 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       return (
         <>
           {/* Fila de meses */}
-          <div className="flex border-b border-gray-700" style={{ backgroundColor: "#2a2a2c" }}>
+          <div className="flex" style={{ backgroundColor: "#2a2a2c", height: 24 }}>
             {mesesAgrupados.map((grupo) => (
               <div
                 key={grupo.mes}
-                className="border-r-2 border-[#E91E63] text-center py-1 text-white text-[10px] font-bold uppercase tracking-wider"
-                style={{ minWidth: `${grupo.dias.length * 50}px` }}
+                className="border-r-2 border-[#E91E63] text-center flex items-center justify-center text-white text-[10px] font-bold uppercase tracking-wider"
+                style={{ width: grupo.dias.length * anchoColDia, minWidth: grupo.dias.length * anchoColDia }}
               >
                 {MESES_COMPLETOS[grupo.mes]}
               </div>
             ))}
           </div>
           {/* Fila de días */}
-          <div className="flex" style={{ backgroundColor: "#1d1d1f" }}>
+          <div className="flex" style={{ backgroundColor: "#1d1d1f", height: 32 }}>
             {dias.map((d) => {
               const iso = formatFechaISO(d);
               const inRango = isDateInRango(iso);
@@ -313,10 +316,10 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
               return (
                 <div
                   key={iso}
-                  className={`border-r border-gray-700 ${anchoCol} text-center py-1 text-white ${
+                  className={`border-r border-gray-700 text-center flex flex-col items-center justify-center text-white ${
                     isWeekend ? "opacity-70" : ""
                   } ${esPrimeroDeMes ? "border-l-2 border-l-[#E91E63]" : ""}`}
-                  style={{ backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
+                  style={{ width: anchoColDia, minWidth: anchoColDia, backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
                   title={`${iso} - ${DOW_ES[d.getDay()]}`}
                 >
                   <div className="text-[9px] font-semibold">{d.getDate()}</div>
@@ -329,8 +332,9 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       );
     }
 
+    // Vista mes o semana
     return (
-      <div className="flex" style={{ backgroundColor: "#1d1d1f" }}>
+      <div className="flex" style={{ backgroundColor: "#1d1d1f", height: 56 }}>
         {dias.map((d) => {
           const isWeekend = d.getDay() === 0 || d.getDay() === 6;
           const iso = formatFechaISO(d);
@@ -338,10 +342,10 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
           return (
             <div
               key={iso}
-              className={`border-r border-gray-700 ${anchoCol} text-center py-2 text-white ${
+              className={`border-r border-gray-700 text-center flex flex-col items-center justify-center text-white ${
                 isWeekend ? "opacity-80" : ""
               }`}
-              style={{ backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
+              style={{ width: anchoColDia, minWidth: anchoColDia, backgroundColor: inRango ? "#E91E63" : "#1d1d1f" }}
             >
               <div className="text-xs font-semibold">{d.getDate()}</div>
               <div className="text-[10px] opacity-70">{DOW_ES[d.getDay()]}</div>
@@ -351,6 +355,50 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       </div>
     );
   };
+
+  // Render de la columna fija del técnico (header)
+  const renderTecnicoHeader = () => (
+    <div
+      className="sticky left-0 z-40 border-r border-gray-700 flex items-center px-2 text-xs font-semibold text-white"
+      style={{ width: anchoColFija, minWidth: anchoColFija, backgroundColor: "#1d1d1f", height: vista === "año" ? 56 : 56 }}
+    >
+      TÉCNICO
+    </div>
+  );
+
+  // Render de la columna fija del técnico (body)
+  const renderTecnicoBody = (t: Tecnico, idx: number) => (
+    <div
+      className="sticky left-0 z-30 border-r border-gray-200 bg-white flex items-center gap-2 p-2"
+      style={{ width: anchoColFija, minWidth: anchoColFija }}
+    >
+      <div className="relative shrink-0">
+        <div className="w-10 h-12 rounded border-2 border-[#E91E63] overflow-hidden bg-gray-100 flex items-center justify-center">
+          {t.foto_url ? (
+            <img
+              src={t.foto_url}
+              alt={t.nombre}
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          ) : (
+            <span className="text-[10px] font-bold text-gray-500">
+              {getIniciales(t.nombre)}
+            </span>
+          )}
+        </div>
+        <div className="absolute -top-1 -left-1 w-5 h-5 rounded-full bg-[#E91E63] text-white text-[9px] flex items-center justify-center font-bold border border-white">
+          {idx + 1}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-semibold text-gray-900 truncate">{t.nombre}</div>
+        <div className="text-[10px] text-gray-500">{t.cargo}</div>
+      </div>
+    </div>
+  );
 
   return (
     <div
@@ -366,13 +414,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     >
       {/* Header sticky */}
       <div className="sticky top-0 z-30 flex" style={{ backgroundColor: "#1d1d1f" }}>
-        {/* FIX: shrink-0 + z-40 + bg explícito para que se quede anclado */}
-        <div
-          className={`sticky left-0 z-40 shrink-0 border-r border-gray-700 ${anchoColFija} p-2 text-xs font-semibold text-white flex items-center`}
-          style={{ backgroundColor: "#1d1d1f" }}
-        >
-          TÉCNICO
-        </div>
+        {renderTecnicoHeader()}
         <div className="flex-1">
           {renderHeader()}
         </div>
@@ -384,37 +426,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
         </div>
       ) : (
         tecnicosVisibles.map((t, idx) => (
-          <div key={t.id} className="flex border-b border-gray-200 hover:bg-gray-50/50 relative">
-            {/* FIX: shrink-0 + z-20 + bg-white explícito */}
-            <div
-              className={`sticky left-0 z-20 shrink-0 bg-white border-r border-gray-200 ${anchoColFija} p-2 flex items-center gap-2`}
-            >
-              <div className="relative shrink-0">
-                <div className="w-10 h-12 rounded border-2 border-[#E91E63] overflow-hidden bg-gray-100 flex items-center justify-center">
-                  {t.foto_url ? (
-                    <img
-                      src={t.foto_url}
-                      alt={t.nombre}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <span className="text-[10px] font-bold text-gray-500">
-                      {getIniciales(t.nombre)}
-                    </span>
-                  )}
-                </div>
-                <div className="absolute -top-1 -left-1 w-5 h-5 rounded-full bg-[#E91E63] text-white text-[9px] flex items-center justify-center font-bold border border-white">
-                  {idx + 1}
-                </div>
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold text-gray-900 truncate">{t.nombre}</div>
-                <div className="text-[10px] text-gray-500">{t.cargo}</div>
-              </div>
-            </div>
+          <div key={t.id} className="flex border-b border-gray-200 hover:bg-gray-50/50">
+            {renderTecnicoBody(t, idx)}
             {/* Celdas de días */}
             <div className="flex">
               {dias.map((d) => {
@@ -428,6 +441,16 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                 const inDragRange = isCellInDragRange(t.id, iso);
                 const esPrimeroDeMes = vista === "año" && d.getDate() === 1;
 
+                const cellBg = inRango
+                  ? "#fce4ec"
+                  : inDragRange
+                  ? "#f8bbd0"
+                  : colorHex && entrada
+                  ? colorHex.soft
+                  : isWeekend
+                  ? "#f9fafb"
+                  : "#ffffff";
+
                 return (
                   <div
                     key={iso}
@@ -437,21 +460,22 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                     onMouseDown={(e) => handleCellMouseDown(t.id, iso, e)}
                     onMouseEnter={() => handleCellMouseEnter(t.id, iso)}
                     onMouseUp={() => handleCellMouseUp(t.id, iso)}
-                    className={`border-r border-gray-200 ${anchoCol} ${vista === "año" ? "min-h-[40px] p-0.5" : "min-h-[64px] p-1"} ${
+                    className={`border-r border-gray-200 ${
                       modoAcceso === "editor" ? "cursor-pointer" : "cursor-default"
                     } transition-colors select-none ${
-                      isWeekend ? "bg-gray-50" : ""
-                    } ${inRango ? "ring-2 ring-[#E91E63] ring-inset bg-[#E91E63]/15" : ""} ${
-                      isDragHover ? "bg-[#E91E63]/20 ring-2 ring-[#E91E63] ring-inset" : ""
-                    } ${inDragRange ? "bg-[#E91E63]/30" : ""} ${esPrimeroDeMes ? "border-l-2 border-l-[#E91E63]" : ""}`}
-                    style={
-                      colorHex && entrada && !inRango && !inDragRange
-                        ? {
-                            backgroundColor: colorHex.soft,
-                            borderLeft: esPrimeroDeMes ? `2px solid #E91E63` : `3px solid ${colorHex.border}`,
-                          }
-                        : undefined
-                    }
+                      inRango ? "ring-2 ring-[#E91E63] ring-inset" : ""
+                    } ${isDragHover ? "ring-2 ring-[#E91E63] ring-inset" : ""} ${
+                      esPrimeroDeMes ? "border-l-2 border-l-[#E91E63]" : ""
+                    }`}
+                    style={{
+                      width: anchoColDia,
+                      minWidth: anchoColDia,
+                      minHeight: vista === "año" ? 40 : 64,
+                      backgroundColor: cellBg,
+                      borderLeft: esPrimeroDeMes ? "2px solid #E91E63" : colorHex && entrada ? `3px solid ${colorHex.border}` : undefined,
+                      padding: vista === "año" ? 2 : 4,
+                      boxSizing: "border-box",
+                    }}
                     title={
                       modoAcceso === "editor"
                         ? `${iso} - ${DOW_ES[d.getDay()]} - Click: editar · Arrastra mouse: rango (solo esta fila)`
