@@ -2,7 +2,7 @@
 
 import { useStore } from "@/lib/store";
 import { COLOR_HEX } from "@/lib/types";
-import { X, Trash2, Save, Calendar } from "lucide-react";
+import { X, Trash2, Save, Calendar, Eraser } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 
 interface Props {
@@ -104,10 +104,8 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     year: "numeric",
   });
 
-  // Info del técnico
   const tecnico = tecnicos.find((t) => t.id === modalEdicion.tecnico_id);
 
-  // Si es asignación a rango, calcular fechas
   const esRango = modalEdicion.aplicarARango && seleccionRango.inicio && seleccionRango.fin;
   const rangoDias = esRango
     ? Math.round(
@@ -120,6 +118,11 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     setOtsSel((prev) =>
       prev.includes(codigo) ? prev.filter((c) => c !== codigo) : [...prev, codigo]
     );
+  };
+
+  // NUEVO: limpiar todos los detalles
+  const handleLimpiarDetalles = () => {
+    setDetallesPorOt({});
   };
 
   // Construir el detalle final con formato: "código:\ndetalle\ncódigo:\ndetalle"
@@ -142,7 +145,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
     const detalleFinal = construirDetalle();
     
     if (esRango && seleccionRango.tecnico_id) {
-      // Guardar en todo el rango
       await guardarEntradasRango(
         seleccionRango.tecnico_id,
         seleccionRango.inicio!,
@@ -154,7 +156,6 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
           notas,
         }
       );
-      // Limpiar rango después de asignar
       setSeleccionRango({ inicio: null, fin: null, tecnico_id: null });
     } else {
       await guardarEntrada(modalEdicion.tecnico_id!, modalEdicion.fecha!, {
@@ -303,12 +304,22 @@ export function ModalEdicion({ actividades, ots, modoAcceso }: Props) {
             </div>
           </div>
 
-          {/* Detalle por OT — cajas individuales */}
+          {/* Detalle por OT — cajas individuales + botón limpiar */}
           {otsSel.length > 0 && (
             <div>
-              <label className="text-xs font-semibold text-gray-700 mb-1.5 block">
-                Detalle por OT
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-gray-700">
+                  Detalle por OT
+                </label>
+                <button
+                  onClick={handleLimpiarDetalles}
+                  className="text-[10px] text-gray-500 hover:text-red-500 flex items-center gap-1"
+                  title="Limpiar todos los detalles"
+                >
+                  <Eraser size={10} />
+                  Limpiar detalles
+                </button>
+              </div>
               <p className="text-[10px] text-gray-400 mb-2">
                 Ingresa el detalle/actividad para cada OT. Formato final:
               </p>
