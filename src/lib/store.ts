@@ -170,6 +170,7 @@ export const useStore = create<AppState>((set, get) => ({
   filtroActividad: "",
   clipboard: null,
   pegarMode: false,
+  modalExportarAbierto: false,
 
   cargarDatos: async () => {
     set({ cargando: true, error: null });
@@ -663,6 +664,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setPegarMode: (b) => set({ pegarMode: b }),
+  setModalExportarAbierto: (b) => set({ modalExportarAbierto: b }),
   limpiarClipboard: () => set({ clipboard: null, pegarMode: false }),
 }));
 
