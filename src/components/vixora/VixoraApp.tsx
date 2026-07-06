@@ -28,6 +28,12 @@ export function VixoraApp() {
     seleccionRango,
     modalEdicion,
     loginModalAbierto,
+    // NUEVO: portapapeles
+    copiarRango,
+    pegarMode,
+    setPegarMode,
+    clipboard,
+    showToast,
   } = useStore();
 
   const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas">("cronograma");
@@ -46,7 +52,6 @@ export function VixoraApp() {
       if (calendarioRef.current && calendarioRef.current.contains(e.target as Node)) {
         return;
       }
-      // Si el click fue en un botón o elemento interactivo, no deseleccionar
       const target = e.target as HTMLElement;
       if (target.closest('button, input, select, textarea, a, [role="button"]')) {
         return;
@@ -58,12 +63,43 @@ export function VixoraApp() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango]);
 
-  // NUEVO: tecla Escape → deseleccionar rango
+  // Tecla Escape → deseleccionar rango o cancelar pegar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Si hay modal abierto, no interferir (el modal maneja su propio Escape)
       if (modalEdicion?.abierto || loginModalAbierto) return;
-      // Si es Escape y hay selección activa, deseleccionar
+
+      // NUEVO: si está en modo pegar, Escape lo cancela
+      if (e.key === "Escape" && pegarMode) {
+        setPegarMode(false);
+        showToast("Pegar cancelado", "info");
+        return;
+      }
+
+      // NUEVO: Ctrl+C para copiar (si hay rango seleccionado)
+      if ((e.ctrlKey || e.metaKey) && e.key === "c" && seleccionRango.inicio) {
+        // No interferir si el foco está en un input
+        const activeEl = document.activeElement;
+        if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT")) {
+          return;
+        }
+        e.preventDefault();
+        copiarRango();
+        return;
+      }
+
+      // NUEVO: Ctrl+V para pegar (si hay clipboard)
+      if ((e.ctrlKey || e.metaKey) && e.key === "v" && clipboard) {
+        const activeEl = document.activeElement;
+        if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT")) {
+          return;
+        }
+        e.preventDefault();
+        setPegarMode(true);
+        showToast("Click en la celda destino para pegar", "info");
+        return;
+      }
+
+      // Escape normal → deseleccionar rango
       if (e.key === "Escape" && seleccionRango.inicio) {
         limpiarSeleccionRango();
       }
@@ -71,9 +107,9 @@ export function VixoraApp() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango]);
+  }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango, pegarMode, setPegarMode, clipboard, copiarRango, showToast]);
 
-  // Pantalla de carga SOLO al inicio (cargando=true)
+  // Pantalla de carga SOLO al inicio
   if (cargando) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
@@ -102,7 +138,7 @@ export function VixoraApp() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
-      {/* Indicador sutil de actualización (barra fina arriba) */}
+      {/* Indicador sutil de actualización */}
       {actualizando && (
         <div className="fixed top-0 left-0 right-0 z-[60] h-1 bg-[#E91E63] animate-pulse" />
       )}
@@ -131,7 +167,7 @@ export function VixoraApp() {
                   )}
                   {modoAcceso === "editor" && (
                     <p className="mt-3 text-xs text-gray-400 italic">
-                      💡 Click en celda para editar · Arrastra mouse para seleccionar rango · Click fuera o tecla <kbd className="px-1 bg-gray-200 rounded text-[9px]">Esc</kbd> para deseleccionar
+                      💡 Click en celda para editar · Arrastra mouse para seleccionar rango · Click fuera o <kbd className="px-1 bg-gray-200 rounded text-[9px]">Esc</kbd> para deseleccionar · <kbd className="px-1 bg-gray-200 rounded text-[9px]">Ctrl+C</kbd> copiar · <kbd className="px-1 bg-gray-200 rounded text-[9px]">Ctrl+V</kbd> pegar
                     </p>
                   )}
                 </div>
