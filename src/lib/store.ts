@@ -24,6 +24,13 @@ export interface SeleccionRango {
   tecnico_id: string | null;
 }
 
+// NUEVO: Portapapeles para copiar/pegar
+export interface ClipboardData {
+  tecnico_id: string;
+  fechas: string[];
+  entradas: { fecha: string; entrada: EntradaCronograma }[];
+}
+
 interface AppState {
   tecnicos: Tecnico[];
   ots: OT[];
@@ -31,7 +38,7 @@ interface AppState {
   cronograma: CronogramaMap;
   modoAcceso: ModoAcceso;
   cargando: boolean;
-  actualizando: boolean; // NUEVO: para actualización silenciosa
+  actualizando: boolean;
   error: string | null;
 
   vista: VistaCalendario;
@@ -49,8 +56,16 @@ interface AppState {
   loginModalAbierto: boolean;
   toast: { mensaje: string; tipo: "ok" | "error" | "info" } | null;
 
+  // NUEVO: búsqueda y filtros
+  busquedaTecnico: string;
+  filtroCargo: string; // "" = todos
+  filtroActividad: string; // "" = todas
+
+  // NUEVO: portapapeles
+  clipboard: ClipboardData | null;
+
   cargarDatos: () => Promise<void>;
-  cargarDatosSilencioso: () => Promise<void>; // NUEVO
+  cargarDatosSilencioso: () => Promise<void>;
   setVista: (v: VistaCalendario) => void;
   setFechaActual: (d: Date) => void;
   avanzaMes: () => void;
@@ -101,6 +116,15 @@ interface AppState {
   regenerarVisual: (year: number, month?: number) => Promise<boolean>;
   cambiarEstadoOt: (codigo: string, nuevoEstado: string) => Promise<boolean>;
   agregarOt: (codigo: string, cliente: string, sede: string, estado: string) => Promise<boolean>;
+
+  // NUEVO: setters de búsqueda/filtros
+  setBusquedaTecnico: (s: string) => void;
+  setFiltroCargo: (c: string) => void;
+  setFiltroActividad: (a: string) => void;
+  limpiarFiltros: () => void;
+
+  // NUEVO: clipboard
+  setClipboard: (c: ClipboardData | null) => void;
 }
 
 export function formatFechaISO(d: Date): string {
@@ -127,7 +151,12 @@ export const useStore = create<AppState>((set, get) => ({
   loginModalAbierto: false,
   toast: null,
 
-  // Carga completa (con pantalla de carga) - solo al inicio
+  // NUEVO
+  busquedaTecnico: "",
+  filtroCargo: "",
+  filtroActividad: "",
+  clipboard: null,
+
   cargarDatos: async () => {
     set({ cargando: true, error: null });
     try {
@@ -151,7 +180,6 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  // NUEVO: Carga silenciosa (sin pantalla de carga, solo indicador sutil)
   cargarDatosSilencioso: async () => {
     set({ actualizando: true });
     try {
@@ -202,7 +230,6 @@ export const useStore = create<AppState>((set, get) => ({
 
   toggleMostrarDetalles: () =>
     set((s) => ({ mostrarDetalles: !s.mostrarDetalles })),
-
   toggleSidebarDerecha: () =>
     set((s) => ({ sidebarDerechaVisible: !s.sidebarDerechaVisible })),
 
@@ -262,7 +289,6 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      // NUEVO: actualización silenciosa (sin pantalla de carga)
       await get().cargarDatosSilencioso();
       get().showToast("Entrada guardada", "ok");
       return true;
@@ -285,7 +311,6 @@ export const useStore = create<AppState>((set, get) => ({
         fechas.push(formatFechaISO(actual));
         actual.setDate(actual.getDate() + 1);
       }
-
       let ok = true;
       for (const fecha of fechas) {
         const res = await fetch("/api/cronograma", {
@@ -299,7 +324,6 @@ export const useStore = create<AppState>((set, get) => ({
           break;
         }
       }
-
       if (ok) {
         await get().cargarDatosSilencioso();
         get().showToast(`Asignado a ${fechas.length} día(s)`, "ok");
@@ -324,7 +348,6 @@ export const useStore = create<AppState>((set, get) => ({
         fechas.push(formatFechaISO(actual));
         actual.setDate(actual.getDate() + 1);
       }
-
       let ok = true;
       for (const fecha of fechas) {
         const existing = get().cronograma[`${tecnico_id}|${fecha}`];
@@ -346,7 +369,6 @@ export const useStore = create<AppState>((set, get) => ({
           break;
         }
       }
-
       if (ok) {
         await get().cargarDatosSilencioso();
         get().showToast(`Estado cambiado a ${nuevaActividad} en ${fechas.length} día(s)`, "ok");
@@ -392,10 +414,7 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarDatosSilencioso();
-      get().showToast(
-        `Técnico ${activo ? "activado" : "desactivado"}`,
-        "ok"
-      );
+      get().showToast(`Técnico ${activo ? "activado" : "desactivado"}`, "ok");
       return true;
     } catch (err) {
       get().showToast(
@@ -473,6 +492,15 @@ export const useStore = create<AppState>((set, get) => ({
       return false;
     }
   },
+
+  // NUEVO: setters búsqueda/filtros
+  setBusquedaTecnico: (s) => set({ busquedaTecnico: s }),
+  setFiltroCargo: (c) => set({ filtroCargo: c }),
+  setFiltroActividad: (a) => set({ filtroActividad: a }),
+  limpiarFiltros: () => set({ busquedaTecnico: "", filtroCargo: "", filtroActividad: "" }),
+
+  // NUEVO: clipboard
+  setClipboard: (c) => set({ clipboard: c }),
 }));
 
 export function getColorActividad(
