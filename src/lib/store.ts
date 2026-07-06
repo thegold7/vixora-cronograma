@@ -63,6 +63,9 @@ interface AppState {
   // portapapeles y modo pegar
   clipboard: ClipboardData | null;
   pegarMode: boolean;
+    // NUEVO: modal exportar
+  modalExportarAbierto: boolean;
+  setModalExportarAbierto: (b: boolean) => void;
 
   cargarDatos: () => Promise<void>;
   cargarDatosSilencioso: () => Promise<void>;
