@@ -24,7 +24,6 @@ export interface SeleccionRango {
   tecnico_id: string | null;
 }
 
-// Portapapeles para copiar/pegar
 export interface ClipboardData {
   tecnico_origen: string;
   entradas: { offset_dias: number; entrada: EntradaCronograma }[];
@@ -55,17 +54,14 @@ interface AppState {
   loginModalAbierto: boolean;
   toast: { mensaje: string; tipo: "ok" | "error" | "info" } | null;
 
-  // búsqueda y filtros
   busquedaTecnico: string;
   filtroCargo: string;
   filtroActividad: string;
 
-  // portapapeles y modo pegar
   clipboard: ClipboardData | null;
   pegarMode: boolean;
-    // NUEVO: modal exportar
+
   modalExportarAbierto: boolean;
-  setModalExportarAbierto: (b: boolean) => void;
 
   cargarDatos: () => Promise<void>;
   cargarDatosSilencioso: () => Promise<void>;
@@ -125,20 +121,20 @@ interface AppState {
   setFiltroActividad: (a: string) => void;
   limpiarFiltros: () => void;
 
-  // NUEVO: acciones de portapapeles
   copiarRango: () => void;
   pegarEnCelda: (tecnico_id: string, fecha: string) => Promise<boolean>;
   duplicarDia: () => Promise<boolean>;
   repetirPatron: (veces: number) => Promise<boolean>;
   setPegarMode: (b: boolean) => void;
   limpiarClipboard: () => void;
+
+  setModalExportarAbierto: (b: boolean) => void;
 }
 
 export function formatFechaISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-// Helper: sumar días a una fecha ISO
 function sumarDiasISO(iso: string, dias: number): string {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + dias);
@@ -513,10 +509,6 @@ export const useStore = create<AppState>((set, get) => ({
   setFiltroActividad: (a) => set({ filtroActividad: a }),
   limpiarFiltros: () => set({ busquedaTecnico: "", filtroCargo: "", filtroActividad: "" }),
 
-  // ============================================================
-  // NUEVO: ACCIONES DE PORTAPAPELES
-  // ============================================================
-
   copiarRango: () => {
     const { seleccionRango, cronograma } = get();
     if (!seleccionRango.inicio || !seleccionRango.fin || !seleccionRango.tecnico_id) {
@@ -569,8 +561,7 @@ export const useStore = create<AppState>((set, get) => ({
       if (json.ok) count++;
     }
     await get().cargarDatosSilencioso();
-    get().showToast(`Pegadas ${count} asignación(es) en ${tecnico_id}`, "ok");
-    set({ pegarMode: false });
+    get().showToast(`Pegadas ${count} asignación(es)`, "ok");
     return true;
   },
 
@@ -620,7 +611,6 @@ export const useStore = create<AppState>((set, get) => ({
     const fin = new Date(seleccionRango.fin + "T00:00:00");
     const diasRango = Math.round((fin.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
-    // Recopilar entradas del rango original
     const entradasOriginales: { offset: number; entrada: EntradaCronograma }[] = [];
     const actual = new Date(inicio);
     while (actual <= fin) {
@@ -664,8 +654,9 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setPegarMode: (b) => set({ pegarMode: b }),
-  setModalExportarAbierto: (b) => set({ modalExportarAbierto: b }),
   limpiarClipboard: () => set({ clipboard: null, pegarMode: false }),
+
+  setModalExportarAbierto: (b) => set({ modalExportarAbierto: b }),
 }));
 
 export function getColorActividad(
