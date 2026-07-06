@@ -24,11 +24,10 @@ export interface SeleccionRango {
   tecnico_id: string | null;
 }
 
-// NUEVO: Portapapeles para copiar/pegar
+// Portapapeles para copiar/pegar
 export interface ClipboardData {
-  tecnico_id: string;
-  fechas: string[];
-  entradas: { fecha: string; entrada: EntradaCronograma }[];
+  tecnico_origen: string;
+  entradas: { offset_dias: number; entrada: EntradaCronograma }[];
 }
 
 interface AppState {
@@ -56,13 +55,14 @@ interface AppState {
   loginModalAbierto: boolean;
   toast: { mensaje: string; tipo: "ok" | "error" | "info" } | null;
 
-  // NUEVO: búsqueda y filtros
+  // búsqueda y filtros
   busquedaTecnico: string;
-  filtroCargo: string; // "" = todos
-  filtroActividad: string; // "" = todas
+  filtroCargo: string;
+  filtroActividad: string;
 
-  // NUEVO: portapapeles
+  // portapapeles y modo pegar
   clipboard: ClipboardData | null;
+  pegarMode: boolean;
 
   cargarDatos: () => Promise<void>;
   cargarDatosSilencioso: () => Promise<void>;
@@ -117,18 +117,29 @@ interface AppState {
   cambiarEstadoOt: (codigo: string, nuevoEstado: string) => Promise<boolean>;
   agregarOt: (codigo: string, cliente: string, sede: string, estado: string) => Promise<boolean>;
 
-  // NUEVO: setters de búsqueda/filtros
   setBusquedaTecnico: (s: string) => void;
   setFiltroCargo: (c: string) => void;
   setFiltroActividad: (a: string) => void;
   limpiarFiltros: () => void;
 
-  // NUEVO: clipboard
-  setClipboard: (c: ClipboardData | null) => void;
+  // NUEVO: acciones de portapapeles
+  copiarRango: () => void;
+  pegarEnCelda: (tecnico_id: string, fecha: string) => Promise<boolean>;
+  duplicarDia: () => Promise<boolean>;
+  repetirPatron: (veces: number) => Promise<boolean>;
+  setPegarMode: (b: boolean) => void;
+  limpiarClipboard: () => void;
 }
 
 export function formatFechaISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Helper: sumar días a una fecha ISO
+function sumarDiasISO(iso: string, dias: number): string {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + dias);
+  return formatFechaISO(d);
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -151,11 +162,11 @@ export const useStore = create<AppState>((set, get) => ({
   loginModalAbierto: false,
   toast: null,
 
-  // NUEVO
   busquedaTecnico: "",
   filtroCargo: "",
   filtroActividad: "",
   clipboard: null,
+  pegarMode: false,
 
   cargarDatos: async () => {
     set({ cargando: true, error: null });
@@ -493,14 +504,163 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  // NUEVO: setters búsqueda/filtros
   setBusquedaTecnico: (s) => set({ busquedaTecnico: s }),
   setFiltroCargo: (c) => set({ filtroCargo: c }),
   setFiltroActividad: (a) => set({ filtroActividad: a }),
   limpiarFiltros: () => set({ busquedaTecnico: "", filtroCargo: "", filtroActividad: "" }),
 
-  // NUEVO: clipboard
-  setClipboard: (c) => set({ clipboard: c }),
+  // ============================================================
+  // NUEVO: ACCIONES DE PORTAPAPELES
+  // ============================================================
+
+  copiarRango: () => {
+    const { seleccionRango, cronograma } = get();
+    if (!seleccionRango.inicio || !seleccionRango.fin || !seleccionRango.tecnico_id) {
+      get().showToast("Selecciona un rango primero", "error");
+      return;
+    }
+    const inicio = new Date(seleccionRango.inicio + "T00:00:00");
+    const fin = new Date(seleccionRango.fin + "T00:00:00");
+    const entradas: { offset_dias: number; entrada: EntradaCronograma }[] = [];
+    const actual = new Date(inicio);
+    while (actual <= fin) {
+      const iso = formatFechaISO(actual);
+      const entrada = cronograma[`${seleccionRango.tecnico_id}|${iso}`];
+      if (entrada) {
+        const offset = Math.round((actual.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24));
+        entradas.push({ offset_dias: offset, entrada });
+      }
+      actual.setDate(actual.getDate() + 1);
+    }
+    if (entradas.length === 0) {
+      get().showToast("El rango seleccionado no tiene asignaciones", "info");
+      return;
+    }
+    set({ clipboard: { tecnico_origen: seleccionRango.tecnico_id, entradas } });
+    get().showToast(`Copiadas ${entradas.length} asignación(es)`, "ok");
+  },
+
+  pegarEnCelda: async (tecnico_id, fecha) => {
+    const { clipboard } = get();
+    if (!clipboard) {
+      get().showToast("No hay nada que pegar (usa Ctrl+C primero)", "error");
+      return false;
+    }
+    let count = 0;
+    for (const item of clipboard.entradas) {
+      const nuevaFecha = sumarDiasISO(fecha, item.offset_dias);
+      const res = await fetch("/api/cronograma", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tecnico_id,
+          fecha: nuevaFecha,
+          actividad: item.entrada.actividad,
+          ots_asignadas: item.entrada.ots_asignadas,
+          detalle: item.entrada.detalle,
+          notas: item.entrada.notas,
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) count++;
+    }
+    await get().cargarDatosSilencioso();
+    get().showToast(`Pegadas ${count} asignación(es) en ${tecnico_id}`, "ok");
+    set({ pegarMode: false });
+    return true;
+  },
+
+  duplicarDia: async () => {
+    const { seleccionRango, cronograma } = get();
+    if (!seleccionRango.inicio || !seleccionRango.tecnico_id) {
+      get().showToast("Selecciona un día primero", "error");
+      return false;
+    }
+    if (seleccionRango.fin && seleccionRango.inicio !== seleccionRango.fin) {
+      get().showToast("Duplicar día requiere seleccionar un solo día", "info");
+      return false;
+    }
+    const entrada = cronograma[`${seleccionRango.tecnico_id}|${seleccionRango.inicio}`];
+    if (!entrada) {
+      get().showToast("El día seleccionado no tiene asignación", "info");
+      return false;
+    }
+    const nuevaFecha = sumarDiasISO(seleccionRango.inicio, 1);
+    const res = await fetch("/api/cronograma", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tecnico_id: seleccionRango.tecnico_id,
+        fecha: nuevaFecha,
+        actividad: entrada.actividad,
+        ots_asignadas: entrada.ots_asignadas,
+        detalle: entrada.detalle,
+        notas: entrada.notas,
+      }),
+    });
+    const json = await res.json();
+    if (json.ok) {
+      await get().cargarDatosSilencioso();
+      get().showToast(`Duplicado a ${nuevaFecha}`, "ok");
+    }
+    return json.ok;
+  },
+
+  repetirPatron: async (veces) => {
+    const { seleccionRango, cronograma } = get();
+    if (!seleccionRango.inicio || !seleccionRango.fin || !seleccionRango.tecnico_id) {
+      get().showToast("Selecciona un rango primero", "error");
+      return false;
+    }
+    const inicio = new Date(seleccionRango.inicio + "T00:00:00");
+    const fin = new Date(seleccionRango.fin + "T00:00:00");
+    const diasRango = Math.round((fin.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Recopilar entradas del rango original
+    const entradasOriginales: { offset: number; entrada: EntradaCronograma }[] = [];
+    const actual = new Date(inicio);
+    while (actual <= fin) {
+      const iso = formatFechaISO(actual);
+      const entrada = cronograma[`${seleccionRango.tecnico_id}|${iso}`];
+      if (entrada) {
+        const offset = Math.round((actual.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24));
+        entradasOriginales.push({ offset, entrada });
+      }
+      actual.setDate(actual.getDate() + 1);
+    }
+
+    if (entradasOriginales.length === 0) {
+      get().showToast("El rango no tiene asignaciones", "info");
+      return false;
+    }
+
+    let count = 0;
+    for (let v = 1; v <= veces; v++) {
+      for (const item of entradasOriginales) {
+        const nuevaFecha = sumarDiasISO(seleccionRango.inicio, item.offset + v * diasRango);
+        const res = await fetch("/api/cronograma", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tecnico_id: seleccionRango.tecnico_id,
+            fecha: nuevaFecha,
+            actividad: item.entrada.actividad,
+            ots_asignadas: item.entrada.ots_asignadas,
+            detalle: item.entrada.detalle,
+            notas: item.entrada.notas,
+          }),
+        });
+        const json = await res.json();
+        if (json.ok) count++;
+      }
+    }
+    await get().cargarDatosSilencioso();
+    get().showToast(`Patrón repetido ${veces} veces (${count} asignaciones)`, "ok");
+    return true;
+  },
+
+  setPegarMode: (b) => set({ pegarMode: b }),
+  limpiarClipboard: () => set({ clipboard: null, pegarMode: false }),
 }));
 
 export function getColorActividad(
