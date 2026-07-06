@@ -2,7 +2,7 @@
 
 import { useStore, formatFechaISO } from "@/lib/store";
 import { COLOR_HEX } from "@/lib/types";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Plus, Eraser, RefreshCw, ChevronDown, Trash2, Search, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Plus, Eraser, RefreshCw, ChevronDown, Trash2, Search, Filter, Copy, ClipboardPaste, Repeat, CopyPlus } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
@@ -27,7 +27,6 @@ export function Topbar() {
     actividades,
     borrarEntrada,
     showToast,
-    // NUEVO: búsqueda y filtros
     busquedaTecnico,
     setBusquedaTecnico,
     filtroCargo,
@@ -35,6 +34,13 @@ export function Topbar() {
     filtroActividad,
     setFiltroActividad,
     limpiarFiltros,
+    // portapapeles
+    clipboard,
+    copiarRango,
+    pegarEnCelda,
+    duplicarDia,
+    repetirPatron,
+    limpiarClipboard,
   } = useStore();
 
   const hoy = new Date();
@@ -108,14 +114,20 @@ export function Topbar() {
     limpiarSeleccionRango();
   };
 
-  // Menú desplegable para cambiar estado
+  // Menús desplegables
   const [menuEstadoAbierto, setMenuEstadoAbierto] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuAccionesAbierto, setMenuAccionesAbierto] = useState(false);
+  const [vecesRepetir, setVecesRepetir] = useState(2);
+  const menuEstadoRef = useRef<HTMLDivElement>(null);
+  const menuAccionesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (menuEstadoRef.current && !menuEstadoRef.current.contains(e.target as Node)) {
         setMenuEstadoAbierto(false);
+      }
+      if (menuAccionesRef.current && !menuAccionesRef.current.contains(e.target as Node)) {
+        setMenuAccionesAbierto(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -134,11 +146,38 @@ export function Topbar() {
     }
   };
 
-  // Cargos únicos para el filtro
-  const cargosUnicos = Array.from(new Set(tecnicos.map((t) => t.cargo)));
+  const handleCopiar = () => {
+    copiarRango();
+    setMenuAccionesAbierto(false);
+  };
 
-  // Verificar si hay filtros activos
+  // FIX: pegar directamente en la celda seleccionada actualmente
+  const handlePegar = () => {
+    if (!clipboard) {
+      showToast("Copia algo primero (Ctrl+C)", "info");
+      return;
+    }
+    if (!seleccionRango.inicio || !seleccionRango.tecnico_id) {
+      showToast("Selecciona la celda destino primero", "info");
+      return;
+    }
+    pegarEnCelda(seleccionRango.tecnico_id, seleccionRango.inicio);
+    setMenuAccionesAbierto(false);
+  };
+
+  const handleDuplicar = async () => {
+    await duplicarDia();
+    setMenuAccionesAbierto(false);
+  };
+
+  const handleRepetir = async () => {
+    await repetirPatron(vecesRepetir);
+    setMenuAccionesAbierto(false);
+  };
+
+  const cargosUnicos = Array.from(new Set(tecnicos.map((t) => t.cargo)));
   const hayFiltrosActivos = busquedaTecnico || filtroCargo || filtroActividad;
+  const esUnSoloDia = tieneRango && seleccionRango.inicio === seleccionRango.fin;
 
   return (
     <header className="bg-white border-b border-gray-200 px-4 py-2 space-y-2">
@@ -199,7 +238,82 @@ export function Topbar() {
                   Asignar
                 </button>
 
-                <div className="relative" ref={menuRef}>
+                {/* Menú de acciones: Copiar/Pegar/Duplicar/Repetir */}
+                <div className="relative" ref={menuAccionesRef}>
+                  <button
+                    onClick={() => setMenuAccionesAbierto(!menuAccionesAbierto)}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs border border-gray-300 rounded font-semibold hover:bg-gray-50 text-gray-700"
+                    title="Acciones avanzadas"
+                  >
+                    <Repeat size={12} />
+                    Acciones
+                    <ChevronDown size={10} />
+                  </button>
+                  {menuAccionesAbierto && (
+                    <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded shadow-lg z-50 min-w-[220px]">
+                      <div className="p-1">
+                        <div className="text-[10px] font-bold text-gray-500 uppercase px-2 py-1">
+                          Copiar / Pegar
+                        </div>
+                        <button
+                          onClick={handleCopiar}
+                          className="w-full text-left px-2 py-1.5 text-[11px] hover:bg-gray-100 rounded flex items-center gap-2"
+                        >
+                          <Copy size={12} />
+                          Copiar rango <kbd className="ml-auto text-[9px] bg-gray-100 px-1 rounded">Ctrl+C</kbd>
+                        </button>
+                        <button
+                          onClick={handlePegar}
+                          disabled={!clipboard}
+                          className="w-full text-left px-2 py-1.5 text-[11px] hover:bg-gray-100 rounded flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <ClipboardPaste size={12} />
+                          Pegar en celda sel. <kbd className="ml-auto text-[9px] bg-gray-100 px-1 rounded">Ctrl+V</kbd>
+                        </button>
+
+                        <div className="border-t border-gray-100 my-1"></div>
+                        <div className="text-[10px] font-bold text-gray-500 uppercase px-2 py-1">
+                          Duplicar / Repetir
+                        </div>
+                        <button
+                          onClick={handleDuplicar}
+                          disabled={!esUnSoloDia}
+                          className="w-full text-left px-2 py-1.5 text-[11px] hover:bg-gray-100 rounded flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={esUnSoloDia ? "Duplica al día siguiente" : "Selecciona un solo día"}
+                        >
+                          <CopyPlus size={12} />
+                          Duplicar día siguiente
+                        </button>
+
+                        <div className="px-2 py-1.5">
+                          <div className="text-[10px] text-gray-600 mb-1 flex items-center gap-1">
+                            <Repeat size={10} />
+                            Repetir patrón:
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={1}
+                              max={52}
+                              value={vecesRepetir}
+                              onChange={(e) => setVecesRepetir(Math.max(1, Math.min(52, parseInt(e.target.value) || 1)))}
+                              className="w-14 px-1 py-0.5 text-[11px] border border-gray-200 rounded"
+                            />
+                            <span className="text-[10px] text-gray-500">veces</span>
+                            <button
+                              onClick={handleRepetir}
+                              className="ml-auto px-2 py-0.5 text-[10px] text-white rounded bg-[#E91E63] hover:opacity-90"
+                            >
+                              Aplicar
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative" ref={menuEstadoRef}>
                   <button
                     onClick={() => setMenuEstadoAbierto(!menuEstadoAbierto)}
                     className="flex items-center gap-1 px-3 py-1.5 text-xs border border-gray-300 rounded font-semibold hover:bg-gray-50 text-gray-700"
@@ -266,6 +380,23 @@ export function Topbar() {
           </div>
         )}
 
+        {/* Indicador clipboard con datos */}
+        {clipboard && (
+          <div className="flex items-center gap-2 px-2 py-1 bg-yellow-50 border border-yellow-200 rounded">
+            <Copy size={12} className="text-yellow-700" />
+            <span className="text-[10px] text-yellow-700">
+              {clipboard.entradas.length} copiada(s) — Selecciona destino + Ctrl+V
+            </span>
+            <button
+              onClick={limpiarClipboard}
+              className="text-yellow-700 hover:text-red-600"
+              title="Vaciar portapapeles"
+            >
+              <X size={10} />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
           <div className="hidden md:flex items-center gap-3 mr-3 text-xs text-gray-500">
             <div className="flex items-center gap-1">
@@ -313,9 +444,8 @@ export function Topbar() {
         </div>
       </div>
 
-      {/* Fila 2: NUEVO — búsqueda y filtros */}
+      {/* Fila 2: búsqueda y filtros */}
       <div className="flex items-center gap-2 flex-wrap">
-        {/* Búsqueda por técnico */}
         <div className="relative flex-1 min-w-[180px] max-w-[260px]">
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
@@ -327,7 +457,6 @@ export function Topbar() {
           />
         </div>
 
-        {/* Filtro por cargo */}
         <div className="relative">
           <Filter size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           <select
@@ -342,7 +471,6 @@ export function Topbar() {
           </select>
         </div>
 
-        {/* Filtro por actividad */}
         <div className="relative">
           <Filter size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           <select
@@ -357,7 +485,6 @@ export function Topbar() {
           </select>
         </div>
 
-        {/* Limpiar filtros */}
         {hayFiltrosActivos && (
           <button
             onClick={limpiarFiltros}
@@ -369,7 +496,6 @@ export function Topbar() {
           </button>
         )}
 
-        {/* Indicador de filtros activos */}
         {hayFiltrosActivos && (
           <span className="text-[10px] text-pink-600 font-semibold flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span>
