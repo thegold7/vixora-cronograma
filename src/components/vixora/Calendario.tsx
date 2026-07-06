@@ -159,10 +159,16 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     };
   }, [modoAcceso, abrirModalEdicion]);
 
-  const handleCellClick = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
+   const handleCellClick = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
     if (modoAcceso !== "editor") return;
     if (isDragging) {
       setIsDragging(false);
+      return;
+    }
+    // NUEVO: si estamos en modo pegar, pegar en esta celda
+    const { pegarMode, pegarEnCelda } = useStore.getState();
+    if (pegarMode) {
+      pegarEnCelda(tecnico_id, fecha);
       return;
     }
     if (e.shiftKey && seleccionRango.inicio) {
