@@ -2,13 +2,13 @@
 
 import { useStore } from "@/lib/store";
 import { VIXORA_COLORS } from "@/lib/types";
-import { Calendar, Users, BarChart3, Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil, Download } from "lucide-react";
+import { Calendar, Users, BarChart3, Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil, Download, MapPin } from "lucide-react";
 import { useState } from "react";
 import { ModalExportar } from "@/components/vixora/ModalExportar";
 
 interface Props {
-  onNavigate: (seccion: "cronograma" | "tecnicos" | "estadisticas") => void;
-  seccionActual: "cronograma" | "tecnicos" | "estadisticas";
+  onNavigate: (seccion: "cronograma" | "tecnicos" | "estadisticas" | "mapa") => void;
+  seccionActual: "cronograma" | "tecnicos" | "estadisticas" | "mapa";
 }
 
 export function SidebarLeft({ onNavigate, seccionActual }: Props) {
@@ -31,7 +31,8 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
         <nav className="flex-1 p-2 space-y-1">
           <SidebarButton icon={<Calendar size={18} />} label="Cronograma" active={seccionActual === "cronograma"} onClick={() => onNavigate("cronograma")} />
           <SidebarButton icon={<Users size={18} />} label="Técnicos" active={seccionActual === "tecnicos"} onClick={() => onNavigate("tecnicos")} />
-          <SidebarButton icon={<BarChart3 size={18} />} label="Estadísticas" active={seccionActual === "estadisticas"} onClick={() => onNavigate("estadisticas")} />
+          <SidebarButton icon={<BarChart3 size={18} />} label="Dashboard" active={seccionActual === "estadisticas"} onClick={() => onNavigate("estadisticas")} />
+          <SidebarButton icon={<MapPin size={18} />} label="Mapa Minas" active={seccionActual === "mapa"} onClick={() => onNavigate("mapa")} />
         </nav>
         {seccionActual === "cronograma" && (
           <div className="p-2 space-y-1 border-t border-white/10">
