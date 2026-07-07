@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { useStore } from "@/lib/store";
+import { useStore, formatFechaISO } from "@/lib/store";
 import { findMinaCoord, type MinaCoord } from "@/lib/minasData";
-import type { OT } from "@/lib/types";
-import { MapPin, Search, X } from "lucide-react";
+import type { OT, Tecnico } from "@/lib/types";
+import { Search, X, Calendar, Info } from "lucide-react";
 
 interface MinaAgrupada {
   coord: MinaCoord;
@@ -14,23 +14,48 @@ interface MinaAgrupada {
   enProceso: number;
   finalizado: number;
   pendiente: number;
-  perdido: number;
   total: number;
 }
 
+interface TecnicoEnMina {
+  tecnico: Tecnico;
+  fecha: string;
+  actividad: string;
+  ots: string;
+}
+
 export function MapaMinas() {
-  const { ots, cronograma, tecnicos, actividades } = useStore();
+  const { ots, cronograma, tecnicos } = useStore();
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.CircleMarker[]>([]);
   const [selectedMina, setSelectedMina] = useState<MinaAgrupada | null>(null);
   const [query, setQuery] = useState("");
+  
+  // Rango de fechas (default: mes actual)
+  const hoy = new Date();
+  const [fechaInicio, setFechaInicio] = useState(() => {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    return formatFechaISO(d);
+  });
+  const [fechaFin, setFechaFin] = useState(() => {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0);
+    return formatFechaISO(d);
+  });
 
-  // Agrupar OTs por ubicación (sede)
+  // Filtrar OTs (sin PERDIDO, solo EN PROCESO, FINALIZADO, PENDIENTE)
+  const otsValidas = useMemo(() => {
+    return ots.filter(o => 
+      o.estado !== "PERDIDO" && 
+      (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE")
+    );
+  }, [ots]);
+
+  // Agrupar OTs por ubicación
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
     
-    for (const ot of ots) {
+    for (const ot of otsValidas) {
       const coord = findMinaCoord(ot.sede);
       if (!coord) continue;
       
@@ -42,7 +67,6 @@ export function MapaMinas() {
           enProceso: 0,
           finalizado: 0,
           pendiente: 0,
-          perdido: 0,
           total: 0,
         };
       }
@@ -50,17 +74,15 @@ export function MapaMinas() {
       grupos[key].ots.push(ot);
       grupos[key].total++;
       
-      const estado = ot.estado.toUpperCase();
-      if (estado === "EN PROCESO") grupos[key].enProceso++;
-      else if (estado === "FINALIZADO") grupos[key].finalizado++;
-      else if (estado === "PENDIENTE") grupos[key].pendiente++;
-      else if (estado === "PERDIDO") grupos[key].perdido++;
+      if (ot.estado === "EN PROCESO") grupos[key].enProceso++;
+      else if (ot.estado === "FINALIZADO") grupos[key].finalizado++;
+      else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
     
-    return Object.values(grupos).filter(g => g.total > 0);
-  }, [ots]);
+    return Object.values(grupos);
+  }, [otsValidas]);
 
-  // Filtrar por búsqueda
+  // Filtrar por búsqueda (incluye OTs)
   const minasFiltradas = useMemo(() => {
     if (!query) return minasAgrupadas;
     const q = query.toLowerCase();
@@ -71,12 +93,44 @@ export function MapaMinas() {
     );
   }, [minasAgrupadas, query]);
 
+  // Obtener técnicos en una mina (solo PROYECTO/SERV. en el rango de fechas)
+  const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoEnMina[] => {
+    const result: TecnicoEnMina[] = [];
+    for (const e of Object.values(cronograma)) {
+      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+      // Solo actividades de proyecto/servicio (inamovibles)
+      if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
+      
+      // Verificar si alguna OT asignada pertenece a esta mina
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+        const perteneceAMina = codigos.some(cod => 
+          mina.ots.some(ot => ot.codigo === cod)
+        );
+        
+        if (perteneceAMina) {
+          const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
+          if (tecnico && tecnico.activo) {
+            result.push({
+              tecnico,
+              fecha: e.fecha,
+              actividad: e.actividad,
+              ots: e.ots_asignadas,
+            });
+          }
+        }
+      }
+    }
+    // Ordenar por fecha
+    return result.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  };
+
   // Inicializar mapa
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
     const map = L.map(containerRef.current, {
-      center: [-9.1900, -75.0152], // Centro del Perú
+      center: [-9.1900, -75.0152],
       zoom: 5,
       zoomControl: true,
       scrollWheelZoom: true,
@@ -95,25 +149,21 @@ export function MapaMinas() {
     };
   }, []);
 
-  // Actualizar markers cuando cambian los datos
+  // Actualizar markers
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Limpiar markers anteriores
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
 
     for (const mina of minasFiltradas) {
-      const { coord, enProceso, finalizado, pendiente, perdido, total } = mina;
+      const { coord, enProceso, finalizado, pendiente, total } = mina;
       
-      // Color del marker según estado dominante
-      let color = "#6b7280"; // gris por defecto
-      if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b"; // amarillo
-      else if (finalizado > 0) color = "#10b981"; // verde
-      else if (perdido > 0) color = "#ef4444"; // rojo
-      else if (pendiente > 0) color = "#3b82f6"; // azul
+      let color = "#6b7280";
+      if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b";
+      else if (finalizado > 0) color = "#10b981";
+      else if (pendiente > 0) color = "#3b82f6";
       
-      // Tamaño según cantidad de OTs
       const radius = Math.min(8 + total * 2, 25);
       
       const marker = L.circleMarker([coord.lat, coord.lng], {
@@ -125,7 +175,6 @@ export function MapaMinas() {
         fillOpacity: 0.8,
       }).addTo(mapRef.current!);
 
-      // Popup con info
       const popupHtml = `
         <div style="font-family: -apple-system, sans-serif; min-width: 180px;">
           <div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div>
@@ -134,40 +183,49 @@ export function MapaMinas() {
             <span style="color: #f59e0b;">⚡ ${enProceso}</span>
             <span style="color: #10b981;">✓ ${finalizado}</span>
             <span style="color: #3b82f6;">⏳ ${pendiente}</span>
-            <span style="color: #ef4444;">✗ ${perdido}</span>
           </div>
           <div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div>
         </div>
       `;
       marker.bindPopup(popupHtml);
-      
-      marker.on("click", () => {
-        setSelectedMina(mina);
-      });
+      marker.on("click", () => setSelectedMina(mina));
 
       markersRef.current.push(marker);
     }
   }, [minasFiltradas]);
 
-  // Hacer zoom a una mina seleccionada
   const zoomToMina = (mina: MinaAgrupada) => {
     if (!mapRef.current) return;
     mapRef.current.flyTo([mina.coord.lat, mina.coord.lng], 8, { duration: 1.2 });
     setSelectedMina(mina);
   };
 
-  // OT seleccionada para resaltar
-  const [otResaltada, setOtResaltada] = useState<string | null>(null);
+  const getIniciales = (nombre: string) => {
+    const partes = nombre.trim().split(/\s+/);
+    return partes.length >= 2 ? (partes[0][0] + partes[1][0]).toUpperCase() : nombre.substring(0, 2).toUpperCase();
+  };
+
+  // Dato curioso "del día" (rota según el día del mes)
+  const getDatoCuriosoDelDia = (mina: MinaAgrupada): string => {
+    const dia = new Date().getDate();
+    const dato = mina.coord.datoCurioso;
+    return dato;
+  };
+
+  // Calcular días restantes hasta la fecha más próxima de técnico en la mina
+  const getProximaFecha = (tecnicos: TecnicoEnMina[]): string | null => {
+    const hoyStr = formatFechaISO(new Date());
+    const futuras = tecnicos.filter(t => t.fecha >= hoyStr);
+    return futuras.length > 0 ? futuras[0].fecha : null;
+  };
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Panel lateral izquierdo: lista de minas */}
-      <div className="w-80 shrink-0 bg-white border-r border-gray-200 flex flex-col">
+      {/* Panel lateral izquierdo */}
+      <div className="w-72 shrink-0 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-3 border-b border-gray-200 bg-white shrink-0">
-          <div className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
-            🗺️ Mapa de Minas
-          </div>
-          <div className="relative">
+          <div className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">🗺️ Mapa de Minas</div>
+          <div className="relative mb-2">
             <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -175,6 +233,23 @@ export function MapaMinas() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Buscar mina, OT o cliente..."
               className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
+            />
+          </div>
+          {/* Rango de fechas */}
+          <div className="flex items-center gap-1 text-[10px]">
+            <Calendar size={10} className="text-gray-400" />
+            <input
+              type="date"
+              value={fechaInicio}
+              onChange={(e) => setFechaInicio(e.target.value)}
+              className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded"
+            />
+            <span className="text-gray-400">→</span>
+            <input
+              type="date"
+              value={fechaFin}
+              onChange={(e) => setFechaFin(e.target.value)}
+              className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded"
             />
           </div>
         </div>
@@ -186,16 +261,13 @@ export function MapaMinas() {
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>En proceso</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>Finalizado</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>Pendiente</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500"></span>Perdido</span>
           </div>
         </div>
 
-        {/* Lista de minas */}
+        {/* Lista */}
         <div className="flex-1 overflow-y-auto">
           {minasFiltradas.length === 0 ? (
-            <div className="p-4 text-center text-xs text-gray-400">
-              No se encontraron minas con OTs asignadas
-            </div>
+            <div className="p-4 text-center text-xs text-gray-400">No se encontraron minas</div>
           ) : (
             minasFiltradas.map((mina) => (
               <div
@@ -211,7 +283,6 @@ export function MapaMinas() {
                     style={{
                       backgroundColor: mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b"
                         : mina.finalizado > 0 ? "#10b981"
-                        : mina.perdido > 0 ? "#ef4444"
                         : mina.pendiente > 0 ? "#3b82f6"
                         : "#6b7280"
                     }}
@@ -226,78 +297,110 @@ export function MapaMinas() {
             ))
           )}
         </div>
-
         <div className="p-2 border-t border-gray-200 bg-white text-[10px] text-gray-400 text-center shrink-0">
-          {minasFiltradas.length} mina(s) · {ots.length} OT(s)
+          {minasFiltradas.length} mina(s) · {otsValidas.length} OT(s)
         </div>
       </div>
 
       {/* Mapa + panel detalle */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Mapa */}
         <div className="flex-1 relative">
           <div ref={containerRef} className="w-full h-full" style={{ minHeight: "400px" }} />
         </div>
 
-        {/* Panel de detalle inferior */}
+        {/* Panel detalle inferior */}
         {selectedMina && (
-          <div className="h-64 shrink-0 bg-white border-t border-gray-200 flex flex-col">
-            <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
-              <div>
-                <div className="text-sm font-bold text-white">{selectedMina.coord.nombre}</div>
-                <div className="text-[10px] text-white/60">📍 {selectedMina.coord.region}</div>
+          <div className="h-80 shrink-0 bg-white border-t border-gray-200 flex">
+            {/* Columna 1: OTs */}
+            <div className="flex-1 flex flex-col border-r border-gray-200 min-w-0">
+              <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
+                <div>
+                  <div className="text-sm font-bold text-white">{selectedMina.coord.nombre}</div>
+                  <div className="text-[10px] text-white/60">📍 {selectedMina.coord.region}</div>
+                </div>
+                <button onClick={() => setSelectedMina(null)} className="text-white/60 hover:text-white p-1">
+                  <X size={16} />
+                </button>
               </div>
-              <button onClick={() => setSelectedMina(null)} className="text-white/60 hover:text-white p-1">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              <div className="flex gap-3 mb-3 text-xs">
-                <span className="text-yellow-600">⚡ {selectedMina.enProceso} en proceso</span>
-                <span className="text-green-600">✓ {selectedMina.finalizado} finalizado</span>
-                <span className="text-blue-600">⏳ {selectedMina.pendiente} pendiente</span>
-                <span className="text-red-600">✗ {selectedMina.perdido} perdido</span>
-              </div>
-              <div className="space-y-1">
-                {selectedMina.ots.map((ot) => {
-                  // Buscar técnicos asignados a esta OT
-                  const tecnicosAsignados = Object.values(cronograma)
-                    .filter(e => e.ots_asignadas?.includes(ot.codigo))
-                    .map(e => {
-                      const t = tecnicos.find(t => t.id === e.tecnico_id);
-                      return t ? { nombre: t.nombre, fecha: e.fecha } : null;
-                    })
-                    .filter(Boolean)
-                    .slice(0, 3);
-
-                  const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700"
-                    : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700"
-                    : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700"
-                    : "bg-red-100 text-red-700";
-
-                  return (
-                    <div
-                      key={ot.codigo}
-                      className={`p-2 rounded border flex items-center gap-2 cursor-pointer hover:bg-gray-50 ${
-                        otResaltada === ot.codigo ? "border-[#E91E63] bg-pink-50" : "border-gray-200"
-                      }`}
-                      onClick={() => setOtResaltada(otResaltada === ot.codigo ? null : ot.codigo)}
-                    >
-                      <div className="text-xs font-mono font-bold text-gray-900 w-24">{ot.codigo}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs text-gray-900 truncate">{ot.cliente}</div>
-                        {tecnicosAsignados.length > 0 && (
-                          <div className="text-[10px] text-gray-500 truncate">
-                            👤 {tecnicosAsignados.map(t => t?.nombre).join(", ")}
-                          </div>
-                        )}
+              <div className="flex-1 overflow-y-auto p-3">
+                <div className="flex gap-3 mb-3 text-xs">
+                  <span className="text-yellow-600">⚡ {selectedMina.enProceso} en proceso</span>
+                  <span className="text-green-600">✓ {selectedMina.finalizado} finalizado</span>
+                  <span className="text-blue-600">⏳ {selectedMina.pendiente} pendiente</span>
+                </div>
+                <div className="text-[10px] font-bold text-gray-500 uppercase mb-1">OTs en esta mina:</div>
+                <div className="space-y-1">
+                  {selectedMina.ots.map((ot) => {
+                    const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700"
+                      : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700"
+                      : "bg-blue-100 text-blue-700";
+                    return (
+                      <div key={ot.codigo} className="p-2 rounded border border-gray-200 flex items-center gap-2 hover:bg-gray-50">
+                        <div className="text-xs font-mono font-bold text-gray-900 w-24">{ot.codigo}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-gray-900 truncate">{ot.cliente}</div>
+                        </div>
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${color}`}>
+                          {ot.estado.slice(0, 3)}
+                        </span>
                       </div>
-                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${color}`}>
-                        {ot.estado.slice(0, 3)}
-                      </span>
-                    </div>
+                    );
+                  })}
+                </div>
+
+                {/* Técnicos en proyecto */}
+                {(() => {
+                  const tecnicosMina = getTecnicosEnMina(selectedMina);
+                  const proximaFecha = getProximaFecha(tecnicosMina);
+                  return (
+                    <>
+                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-4">
+                        Técnicos en proyecto ({tecnicosMina.length}):
+                      </div>
+                      <div className="space-y-2">
+                        {tecnicosMina.slice(0, 5).map((t, i) => (
+                          <div key={i} className="flex items-center gap-2 p-1.5 bg-gray-50 rounded">
+                            <div className="w-8 h-8 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
+                              {t.tecnico.foto_url ? (
+                                <img src={t.tecnico.foto_url} alt={t.tecnico.nombre} className="w-full h-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold text-gray-500">{getIniciales(t.tecnico.nombre)}</div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-semibold text-gray-900 truncate">{t.tecnico.nombre}</div>
+                              <div className="text-[10px] text-gray-500 truncate">{t.actividad}</div>
+                            </div>
+                            <div className="text-[10px] text-gray-600 shrink-0">{t.fecha.split("-").reverse().join("/")}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {proximaFecha && (
+                        <div className="mt-3 p-2 bg-pink-50 border border-pink-200 rounded text-[11px] text-pink-700">
+                          📅 Próxima fecha: <strong>{proximaFecha.split("-").reverse().join("/")}</strong>
+                        </div>
+                      )}
+                    </>
                   );
-                })}
+                })()}
+              </div>
+            </div>
+
+            {/* Columna 2: Dato curioso */}
+            <div className="w-64 shrink-0 flex flex-col bg-gradient-to-b from-pink-50 to-white">
+              <div className="px-4 py-2 border-b border-pink-200 flex items-center gap-2 bg-pink-100">
+                <Info size={14} className="text-[#E91E63]" />
+                <span className="text-xs font-bold text-[#E91E63]">Dato de la ciudad</span>
+              </div>
+              <div className="flex-1 p-4 flex flex-col">
+                <div className="text-sm font-bold text-gray-900 mb-2">{selectedMina.coord.ciudad}</div>
+                <div className="text-[11px] text-gray-700 leading-relaxed flex-1">
+                  {selectedMina.coord.datoCurioso}
+                </div>
+                <div className="mt-3 pt-3 border-t border-pink-200">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Región</div>
+                  <div className="text-xs text-gray-700 font-semibold">{selectedMina.coord.region}</div>
+                </div>
               </div>
             </div>
           </div>
