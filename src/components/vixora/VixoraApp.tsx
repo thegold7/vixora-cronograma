@@ -10,6 +10,8 @@ import { LoginModal } from "@/components/vixora/LoginModal";
 import { Toast } from "@/components/vixora/Toast";
 import { TecnicosManager } from "@/components/vixora/TecnicosManager";
 import { Estadisticas } from "@/components/vixora/Estadisticas";
+import { MapaMinas } from "@/components/vixora/MapaMinas";
+import { ModalExportar } from "@/components/vixora/ModalExportar";
 import { useEffect, useState, useRef } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -34,7 +36,7 @@ export function VixoraApp() {
     showToast,
   } = useStore();
 
-  const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas">("cronograma");
+  const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas" | "mapa">("cronograma");
 
   const calendarioRef = useRef<HTMLDivElement>(null);
 
@@ -66,18 +68,15 @@ export function VixoraApp() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (modalEdicion?.abierto || loginModalAbierto) return;
 
-      // No interferir si el foco está en un input
       const activeEl = document.activeElement;
       const enInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT");
 
-      // Ctrl+C: copiar rango seleccionado
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && seleccionRango.inicio && !enInput) {
         e.preventDefault();
         copiarRango();
         return;
       }
 
-      // Ctrl+V: pegar en la celda actualmente seleccionada
       if ((e.ctrlKey || e.metaKey) && e.key === "v" && !enInput) {
         if (!clipboard) {
           showToast("Copia algo primero (Ctrl+C)", "info");
@@ -92,7 +91,6 @@ export function VixoraApp() {
         return;
       }
 
-      // Escape → deseleccionar rango
       if (e.key === "Escape" && seleccionRango.inicio) {
         limpiarSeleccionRango();
       }
@@ -102,7 +100,6 @@ export function VixoraApp() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango, clipboard, copiarRango, pegarEnCelda, showToast]);
 
-  // Pantalla de carga SOLO al inicio
   if (cargando) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
@@ -118,10 +115,7 @@ export function VixoraApp() {
         <div className="bg-white border border-red-200 rounded-lg p-6 max-w-md">
           <h2 className="text-lg font-bold text-red-700 mb-2">Error al cargar</h2>
           <p className="text-sm text-gray-600 mb-3">{error}</p>
-          <button
-            onClick={() => cargarDatos()}
-            className="px-3 py-1.5 text-xs text-white rounded bg-[#E91E63]"
-          >
+          <button onClick={() => cargarDatos()} className="px-3 py-1.5 text-xs text-white rounded bg-[#E91E63]">
             Reintentar
           </button>
         </div>
@@ -176,6 +170,10 @@ export function VixoraApp() {
                   cronograma={cronograma}
                   ots={ots}
                 />
+              )}
+
+              {seccion === "mapa" && (
+                <MapaMinas />
               )}
             </div>
 
