@@ -337,22 +337,39 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           </div>
         </div>
 
-        {vistaSecundaria === "porTecnico" && (
-          <div className="space-y-1.5 max-h-96 overflow-y-auto">
+      {vistaSecundaria === "porTecnico" && (
+          <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2">
             {stats.statsPorTecnicoLista.map((item, i) => {
               const maxCount = stats.statsPorTecnicoLista[0].count || 1;
               const pct = Math.round((item.count / maxCount) * 100);
               return (
-                <div key={item.tecnico.id} className="flex items-center gap-2">
+                <div key={item.tecnico.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
                   <div className="w-5 text-[10px] font-bold text-gray-400">{i + 1}</div>
-                  <div className="w-40 text-[11px] font-semibold text-gray-900 truncate">{item.tecnico.nombre}</div>
-                  <div className="flex-1">
-                    <div className="text-[10px] text-gray-500">{item.tecnico.cargo}</div>
-                    <div className="h-2 bg-gray-100 rounded overflow-hidden mt-0.5">
+                  {/* Foto del técnico */}
+                  <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100 flex items-center justify-center shrink-0">
+                    {item.tecnico.foto_url ? (
+                      <img 
+                        src={item.tecnico.foto_url} 
+                        alt={item.tecnico.nombre}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <span className="text-[10px] font-bold text-gray-500">
+                        {item.tecnico.nombre.substring(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-gray-900 truncate">{item.tecnico.nombre}</div>
+                    <div className="text-[10px] text-gray-500 mb-1">{item.tecnico.cargo}</div>
+                    <div className="h-2 bg-gray-100 rounded overflow-hidden">
                       <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
-                  <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
+                  <div className="text-sm font-bold text-gray-900 w-10 text-right">{item.count}</div>
                 </div>
               );
             })}
