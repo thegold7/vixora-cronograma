@@ -480,6 +480,53 @@ export async function deleteSede(nombre: string): Promise<{ ok: true }> {
     range: "Sedes!A1:Z",
   });
 
+export async function updateSede(
+  nombreOriginal: string,
+  newData: {
+    nombre: string;
+    lat: number;
+    lng: number;
+    region: string;
+    ciudad: string;
+    datoCurioso: string;
+    foto_ciudad: string;
+  }
+): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getSedes();
+  const idx = all.findIndex((s) => s.nombre.toUpperCase() === nombreOriginal.toUpperCase());
+  if (idx < 0) throw new Error(`Sede ${nombreOriginal} no encontrada`);
+  
+  const rowNumber = idx + 2;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `Sedes!A${rowNumber}:G${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[newData.nombre, newData.lat, newData.lng, newData.region, newData.ciudad, newData.datoCurioso, newData.foto_ciudad]] },
+  });
+  return { ok: true };
+}
+
+export async function replaceAllSedes(sedes: Sede[]): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad"]];
+  const rows = sedes.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: getSheetId(),
+    range: "Sedes!A1:Z",
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: "Sedes!A1",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [...header, ...rows] },
+  });
+
+  return { ok: true };
+}
+
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(),
     range: "Sedes!A1",
