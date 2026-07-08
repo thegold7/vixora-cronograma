@@ -17,7 +17,6 @@ interface MinaAgrupada {
   total: number;
 }
 
-// Simplificado: 1 técnico = 1 fila con su fecha min y max
 interface TecnicoAgrupado {
   tecnico: Tecnico;
   fechaInicio: string;
@@ -94,14 +93,12 @@ export function MapaMinas() {
     );
   }, [minasAgrupadas, query]);
 
-  // FIX: Agrupar por técnico (1 fila por técnico) mostrando fecha min y max
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
     const tecnicosMap: Record<string, TecnicoAgrupado> = {};
     
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
       
-      // Solo actividades de proyecto/servicio (inamovibles)
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
       
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
@@ -119,7 +116,6 @@ export function MapaMinas() {
                 actividades: new Set([e.actividad]),
               };
             } else {
-              // Actualizar fechas min/max
               if (e.fecha < tecnicosMap[tecnico.id].fechaInicio) {
                 tecnicosMap[tecnico.id].fechaInicio = e.fecha;
               }
@@ -133,7 +129,6 @@ export function MapaMinas() {
       }
     }
     
-    // Convertir a array y ordenar por fechaInicio
     return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
@@ -364,15 +359,22 @@ export function MapaMinas() {
               </div>
             </div>
 
-            {/* Columna 2: Dato curioso */}
+            {/* Columna 2: Dato curioso con imagen real */}
             <div className="w-56 shrink-0 flex flex-col bg-white">
               <div className="px-3 py-2 border-b border-gray-200 flex items-center gap-2 bg-gray-50">
                 <Info size={12} className="text-[#E91E63]" />
                 <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
               </div>
-              <div className="h-24 bg-gradient-to-br from-pink-100 via-purple-100 to-blue-100 flex items-center justify-center relative overflow-hidden">
-                <MapPin size={32} className="text-[#E91E63] opacity-50" />
-                <div className="absolute bottom-1 left-2 text-xs font-bold text-gray-800 bg-white/70 px-2 py-0.5 rounded">
+              <div className="h-28 relative overflow-hidden bg-gray-100">
+                <img 
+                  src={selectedMina.coord.foto_ciudad} 
+                  alt={selectedMina.coord.ciudad}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+                <div className="absolute bottom-1 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">
                   {selectedMina.coord.ciudad}
                 </div>
               </div>
