@@ -2,8 +2,7 @@
 
 import { useStore } from "@/lib/store";
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X, Database, Upload } from "lucide-react";
-import { MINAS_PERU } from "@/lib/minasData";
+import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X } from "lucide-react";
 
 export function AdminPanel() {
   const { cargarDatosSilencioso, showToast } = useStore();
@@ -11,11 +10,9 @@ export function AdminPanel() {
   const [sedes, setSedes] = useState<any[]>([]);
   const [cargando, setCargando] = useState(true);
 
-  // Form OTs
   const [editandoOt, setEditandoOt] = useState<string | null>(null);
   const [formData, setFormData] = useState({ codigo: "", cliente: "", sede: "", estado: "EN PROCESO", visible_mapa: true });
   
-  // Form Sedes
   const [editandoSede, setEditandoSede] = useState<string | null>(null);
   const [formSede, setFormSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   
@@ -43,7 +40,6 @@ export function AdminPanel() {
     fetchAllData();
   }, []);
 
-  // === Handlers OTs ===
   const resetFormOt = () => {
     setEditandoOt(null);
     setFormData({ codigo: "", cliente: "", sede: "", estado: "EN PROCESO", visible_mapa: true });
@@ -66,7 +62,12 @@ export function AdminPanel() {
         });
         const json = await res.json();
         if (!json.ok) throw new Error(json.error);
-        showToast(`OT ${formData.codigo} actualizada`, "ok");
+        
+        const otOriginal = allOts.find(o => o.codigo === editandoOt);
+        if (otOriginal && (otOriginal.visible_mapa ?? true) !== formData.visible_mapa) {
+          await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "toggle_visible", codigo: formData.codigo, visible: formData.visible_mapa }) });
+        }
+        showToast(`OT actualizada`, "ok");
       } else {
         const res = await fetch("/api/ot", {
           method: "POST",
@@ -78,7 +79,7 @@ export function AdminPanel() {
         if (!formData.visible_mapa) {
           await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "toggle_visible", codigo: formData.codigo, visible: false }) });
         }
-        showToast(`OT ${formData.codigo} agregada`, "ok");
+        showToast(`OT agregada`, "ok");
       }
       await fetchAllData();
       await cargarDatosSilencioso();
@@ -114,7 +115,6 @@ export function AdminPanel() {
     }
   };
 
-  // === Handlers Sedes ===
   const resetFormSede = () => {
     setEditandoSede(null);
     setFormSede({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
@@ -137,7 +137,7 @@ export function AdminPanel() {
         });
         const json = await res.json();
         if (!json.ok) throw new Error(json.error);
-        showToast(`Sede actualizada`, "ok");
+        showToast(`Sede actualizada en Excel`, "ok");
       } else {
         const res = await fetch("/api/sedes", {
           method: "POST",
@@ -146,7 +146,7 @@ export function AdminPanel() {
         });
         const json = await res.json();
         if (!json.ok) throw new Error(json.error);
-        showToast(`Sede agregada`, "ok");
+        showToast(`Sede agregada al Excel`, "ok");
       }
       await fetchAllData();
       resetFormSede();
@@ -168,25 +168,6 @@ export function AdminPanel() {
     }
   };
 
-  // Sincronizar predefinidas a Excel
-  const handleSincronizar = async () => {
-    if (!confirm("¿Sobrescribir la hoja 'Sedes' en Excel con las 30 sedes predefinidas?")) return;
-    try {
-      const res = await fetch("/api/sedes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accion: "sincronizar", sedes: MINAS_PERU }),
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      await fetchAllData();
-      showToast("Sedes sincronizadas en Excel", "ok");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Error", "error");
-    }
-  };
-
-  // Contar OTs por sede
   const getOtCount = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre).length;
 
   return (
@@ -210,7 +191,6 @@ export function AdminPanel() {
         </button>
       </div>
 
-      {/* === TAB OTs === */}
       {tabActivo === "ots" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white border border-gray-200 rounded-lg p-4 h-fit">
@@ -266,7 +246,6 @@ export function AdminPanel() {
         </div>
       )}
 
-      {/* === TAB SEDES === */}
       {tabActivo === "sedes" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white border border-gray-200 rounded-lg p-4 h-fit">
@@ -286,16 +265,8 @@ export function AdminPanel() {
               <input type="text" placeholder="URL Foto" value={formSede.foto_ciudad} onChange={(e) => setFormSede({...formSede, foto_ciudad: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded" />
               <div className="flex gap-2">
                 {editandoSede && (<button onClick={resetFormSede} className="flex items-center justify-center gap-1 py-1.5 px-3 text-xs border border-gray-300 rounded text-gray-600 hover:bg-gray-50"><X size={14} /> Cancelar</button>)}
-                <button onClick={handleSubmitSede} className="flex-1 flex items-center justify-center gap-1 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b]"><Save size={14} /> Guardar</button>
+                <button onClick={handleSubmitSede} className="flex-1 flex items-center justify-center gap-1 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b]"><Save size={14} /> Guardar en Excel</button>
               </div>
-            </div>
-
-            {/* Botón Sincronizar Excel */}
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <button onClick={handleSincronizar} className="w-full flex items-center justify-center gap-1 py-1.5 text-xs text-[#E91E63] border border-[#E91E63] rounded hover:bg-pink-50">
-                <Upload size={14} /> Sincronizar 30 sedes a Excel
-              </button>
-              <p className="text-[9px] text-gray-400 mt-1 text-center">Escribe las coordenadas predefinidas en la hoja "Sedes"</p>
             </div>
           </div>
 
@@ -319,9 +290,8 @@ export function AdminPanel() {
                 ))}
                 {sedes.length === 0 && (
                   <div className="text-center py-8">
-                    <Database size={24} className="mx-auto text-gray-300 mb-2" />
-                    <p className="text-xs text-gray-400 mb-2">No hay sedes en Excel.</p>
-                    <button onClick={handleSincronizar} className="text-xs text-[#E91E63] font-medium hover:underline">Sincronizar predefinidas ahora</button>
+                    <MapPin size={24} className="mx-auto text-gray-300 mb-2" />
+                    <p className="text-xs text-gray-400">No hay sedes en Excel. Agrega la primera usando el formulario de la izquierda.</p>
                   </div>
                 )}
               </div>
