@@ -321,28 +321,31 @@ export async function updateOtEstado(
   return { ok: true };
 }
 
-export async function addOt(
-  codigo: string,
+export async function updateOt(
+  codigoOriginal: string,
+  nuevoCodigo: string,
   cliente: string,
   sede: string,
   estado: string
 ): Promise<{ ok: true }> {
   const sheets = getClient();
+  const all = await getOTs();
+  const idx = all.findIndex((o) => o.codigo === codigoOriginal);
+  if (idx < 0) throw new Error(`OT ${codigoOriginal} no encontrada`);
+  
+  if (nuevoCodigo !== codigoOriginal && all.some(o => o.codigo === nuevoCodigo)) {
+    throw new Error(`Ya existe una OT con código ${nuevoCodigo}`);
+  }
+
+  const rowNumber = idx + 2;
   const estadoUpper = estado.toUpperCase();
   const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
 
-  const all = await getOTs();
-  if (all.some((o) => o.codigo === codigo)) {
-    throw new Error(`Ya existe una OT con código ${codigo}`);
-  }
-
-  const values = [[codigo, cliente, sede, estadoUpper, activo, "TRUE"]];
-  await sheets.spreadsheets.values.append({
+  await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(),
-    range: "OTs!A:F",
+    range: `OTs!A${rowNumber}:E${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values },
+    requestBody: { values: [[nuevoCodigo, cliente, sede, estadoUpper, activo]] },
   });
   return { ok: true };
 }
