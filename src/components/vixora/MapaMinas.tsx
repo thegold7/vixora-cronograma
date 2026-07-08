@@ -24,8 +24,23 @@ interface TecnicoEnMina {
   ots: string;
 }
 
+interface TecnicoAgrupado {
+  tecnico: Tecnico;
+  fechaInicio: string;
+  fechaFin: string;
+  actividad: string;
+  count: number;
+}
+
+// Helper para sumar días a una fecha ISO
+function sumarDiasISO(iso: string, dias: number): string {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + dias);
+  return formatFechaISO(d);
+}
+
 export function MapaMinas() {
-  const { ots, cronograma, tecnicos, cargarDatos } = useStore();
+  const { ots, cronograma, tecnicos, cargarDatosSilencioso } = useStore();
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.CircleMarker[]>([]);
@@ -33,18 +48,17 @@ export function MapaMinas() {
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
   
-  // Fechas: input (no aplicado) y aplicado
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [inputFin, setInputFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
   
-  // Fechas aplicadas (default: mes actual)
   const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
 
+  // FIX: Usar carga silenciosa para no destruir el mapa
   const handleActualizar = async () => {
     setActualizando(true);
-    await cargarDatos();
+    await cargarDatosSilencioso();
     setActualizando(false);
   };
 
@@ -53,14 +67,11 @@ export function MapaMinas() {
     setFechaFin(inputFin);
   };
 
-  // FIX: buscar coordenada por sede O por cliente (porque muchas OTs tienen sede vacía)
   const getCoordDeOt = (ot: OT): MinaCoord | null => {
-    // 1. Intentar por sede
     if (ot.sede && ot.sede.trim()) {
       const c = findMinaCoord(ot.sede);
       if (c) return c;
     }
-    // 2. Intentar por cliente
     if (ot.cliente && ot.cliente.trim()) {
       const c = findMinaCoord(ot.cliente);
       if (c) return c;
@@ -98,37 +109,55 @@ export function MapaMinas() {
     );
   }, [minasAgrupadas, query]);
 
-  // FIX: mostrar técnicos en proyecto/servicio en el rango de fechas
-  const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoEnMina[] => {
-    const result: TecnicoEnMina[] = [];
+  // FIX: Agrupar técnicos por fechas consecutivas
+  const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
+    const asignaciones: TecnicoEnMina[] = [];
     for (const e of Object.values(cronograma)) {
-      // Filtrar por rango de fechas
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
-      
-      // Solo actividades de proyecto/servicio (inamovibles)
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
       
-      // Verificar si alguna OT asignada pertenece a esta mina
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
-        const perteneceAMina = codigos.some(cod => 
-          mina.ots.some(ot => ot.codigo === cod)
-        );
+        const perteneceAMina = codigos.some(cod => mina.ots.some(ot => ot.codigo === cod));
         
         if (perteneceAMina) {
           const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
           if (tecnico && tecnico.activo) {
-            result.push({
-              tecnico,
-              fecha: e.fecha,
-              actividad: e.actividad,
-              ots: e.ots_asignadas,
-            });
+            asignaciones.push({ tecnico, fecha: e.fecha, actividad: e.actividad, ots: e.ots_asignadas });
           }
         }
       }
     }
-    return result.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    
+    // Ordenar por fecha
+    asignaciones.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    
+    // Agrupar consecutivos
+    const grupos: TecnicoAgrupado[] = [];
+    for (const asig of asignaciones) {
+      const ultimo = grupos[grupos.length - 1];
+      const fechaAnterior = ultimo ? sumarDiasISO(ultimo.fechaFin, 1) : null;
+      
+      if (ultimo && 
+          ultimo.tecnico.id === asig.tecnico.id && 
+          ultimo.actividad === asig.actividad &&
+          fechaAnterior === asig.fecha) {
+        // Es consecutivo: extender el rango
+        ultimo.fechaFin = asig.fecha;
+        ultimo.count++;
+      } else {
+        // No es consecutivo o es otro técnico: nuevo grupo
+        grupos.push({
+          tecnico: asig.tecnico,
+          fechaInicio: asig.fecha,
+          fechaFin: asig.fecha,
+          actividad: asig.actividad,
+          count: 1,
+        });
+      }
+    }
+    
+    return grupos;
   };
 
   useEffect(() => {
@@ -185,10 +214,10 @@ export function MapaMinas() {
     return partes.length >= 2 ? (partes[0][0] + partes[1][0]).toUpperCase() : nombre.substring(0, 2).toUpperCase();
   };
 
-  const getProximaFecha = (tecnicos: TecnicoEnMina[]): string | null => {
-    const hoyStr = formatFechaISO(new Date());
-    const futuras = tecnicos.filter(t => t.fecha >= hoyStr);
-    return futuras.length > 0 ? futuras[0].fecha : null;
+  // Formatear fechas para mostrar
+  const fmtFecha = (iso: string) => {
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}`;
   };
 
   return (
@@ -212,33 +241,18 @@ export function MapaMinas() {
               className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
             />
           </div>
-          {/* Rango de fechas con botón aplicar */}
           <div className="space-y-1">
             <div className="flex items-center gap-1 text-[10px] text-gray-600">
               <Calendar size={10} className="text-gray-400" />
               <span className="font-semibold">Rango de fechas:</span>
             </div>
             <div className="flex items-center gap-1">
-              <input
-                type="date"
-                value={inputInicio}
-                onChange={(e) => setInputInicio(e.target.value)}
-                className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded"
-              />
+              <input type="date" value={inputInicio} onChange={(e) => setInputInicio(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
               <span className="text-gray-400">→</span>
-              <input
-                type="date"
-                value={inputFin}
-                onChange={(e) => setInputFin(e.target.value)}
-                className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded"
-              />
+              <input type="date" value={inputFin} onChange={(e) => setInputFin(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
             </div>
-            <button
-              onClick={handleAplicarFechas}
-              className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]"
-            >
-              <Check size={10} />
-              Aplicar fechas
+            <button onClick={handleAplicarFechas} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
+              <Check size={10} /> Aplicar fechas
             </button>
           </div>
         </div>
@@ -318,14 +332,13 @@ export function MapaMinas() {
                 
                 {(() => {
                   const tecnicosMina = getTecnicosEnMina(selectedMina);
-                  const proximaFecha = getProximaFecha(tecnicosMina);
                   return (
                     <>
                       <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">
                         Técnicos en proyecto ({tecnicosMina.length}):
                       </div>
                       <div className="space-y-1 mb-3">
-                        {tecnicosMina.slice(0, 4).map((t, i) => (
+                        {tecnicosMina.map((t, i) => (
                           <div key={i} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
                             <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
                               {t.tecnico.foto_url ? (
@@ -338,15 +351,12 @@ export function MapaMinas() {
                               <div className="text-xs font-semibold text-gray-900 truncate">{t.tecnico.nombre}</div>
                               <div className="text-[10px] text-gray-500 truncate">{t.actividad}</div>
                             </div>
-                            <div className="text-[10px] text-gray-600 shrink-0">{t.fecha.split("-").reverse().join("/")}</div>
+                            <div className="text-[10px] text-gray-600 shrink-0 font-medium">
+                              {t.count === 1 ? fmtFecha(t.fechaInicio) : `${fmtFecha(t.fechaInicio)} → ${fmtFecha(t.fechaFin)}`}
+                            </div>
                           </div>
                         ))}
                       </div>
-                      {proximaFecha && (
-                        <div className="mb-3 p-2 bg-pink-50 border border-pink-200 rounded text-[11px] text-pink-700">
-                          📅 Próxima fecha: <strong>{proximaFecha.split("-").reverse().join("/")}</strong>
-                        </div>
-                      )}
                     </>
                   );
                 })()}
@@ -373,13 +383,12 @@ export function MapaMinas() {
               </div>
             </div>
 
-            {/* Columna 2: Dato curioso (compacto) con imagen */}
+            {/* Columna 2: Dato curioso */}
             <div className="w-56 shrink-0 flex flex-col bg-white">
               <div className="px-3 py-2 border-b border-gray-200 flex items-center gap-2 bg-gray-50">
                 <Info size={12} className="text-[#E91E63]" />
                 <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
               </div>
-              {/* Imagen de la ciudad (placeholder con gradiente) */}
               <div className="h-24 bg-gradient-to-br from-pink-100 via-purple-100 to-blue-100 flex items-center justify-center relative overflow-hidden">
                 <MapPin size={32} className="text-[#E91E63] opacity-50" />
                 <div className="absolute bottom-1 left-2 text-xs font-bold text-gray-800 bg-white/70 px-2 py-0.5 rounded">
