@@ -1,427 +1,60 @@
-"use client";
-
-import { useEffect, useRef, useState, useMemo } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import { useStore, formatFechaISO } from "@/lib/store";
-import { findMinaCoord, type MinaCoord } from "@/lib/minasData";
-import type { OT, Tecnico, Sede } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, Check } from "lucide-react";
-
-interface MinaAgrupada {
-  coord: MinaCoord;
-  ots: OT[];
-  enProceso: number;
-  finalizado: number;
-  pendiente: number;
-  total: number;
+// Coordenadas de las principales minas y sedes en Perú
+export interface MinaCoord {
+  nombre: string;
+  lat: number;
+  lng: number;
+  region: string;
+  ciudad: string;
+  datoCurioso: string;
+  foto_ciudad: string;
 }
 
-interface TecnicoAgrupado {
-  tecnico: Tecnico;
-  fechaInicio: string;
-  fechaFin: string;
-  actividades: Set<string>;
-}
+export const MINAS_PERU: MinaCoord[] = [
+  { nombre: "MARCOBRE", lat: -14.6133, lng: -75.1039, region: "Nazca, Ica", ciudad: "Nazca", datoCurioso: "Famosa por las Líneas de Nazca, geoglifos milenarios visibles desde el aire, declaradas Patrimonio de la Humanidad por la UNESCO en 1994.", foto_ciudad: "https://i.postimg.cc/XJ31Gpj1/Copper-Mark-Mina-Justa1-2024-10-02-1024x768.jpg" },
+  { nombre: "ANTAPACCAY", lat: -14.2833, lng: -71.1833, region: "Espinar, Cusco", ciudad: "Espinar", datoCurioso: "Ubicada a más de 4,000 msnm en la sierra sur del Perú, es una zona de gran tradición ganadera y minera.", foto_ciudad: "https://i.postimg.cc/59Kp1Pz0/image.png" },
+  { nombre: "ANTAMINA", lat: -9.5667, lng: -77.0667, region: "San Marcos, Ancash", ciudad: "Huari", datoCurioso: "Una de las minas de cobre más grandes del mundo, opera a 4,300 msnm en la Cordillera de los Andes.", foto_ciudad: "https://i.postimg.cc/0QBmgBBh/image.png" },
+  { nombre: "ANTAMINA NUEVO", lat: -9.5667, lng: -77.0667, region: "San Marcos, Ancash", ciudad: "Huari", datoCurioso: "Una de las minas de cobre más grandes del mundo, opera a 4,300 msnm en la Cordillera de los Andes.", foto_ciudad: "https://i.postimg.cc/0QBmgBBh/image.png" },
+  { nombre: "TOROMOCHO", lat: -11.5500, lng: -76.2500, region: "Yauli, Junín", ciudad: "La Oroya", datoCurioso: "La ciudad de La Oroya es históricamente conocida por su complejo metalúrgico, uno de los más importantes del país.", foto_ciudad: "https://i.postimg.cc/sgjph776/image.png" },
+  { nombre: "BAMBAS", lat: -14.1500, lng: -72.3500, region: "Cotabambas, Apurímac", ciudad: "Cotabambas", datoCurioso: "El proyecto minero Las Bambas es uno de los mayores productores de cobre del Perú, generando desarrollo en la región de Apurímac.", foto_ciudad: "https://i.postimg.cc/66CRbYh1/image.png" },
+  { nombre: "CERRO VERDE", lat: -16.3000, lng: -71.6000, region: "Arequipa", ciudad: "Arequipa", datoCurioso: "Arequipa, la 'Ciudad Blanca', es el centro económico del sur del Perú, famosa por su centro histórico construido con sillar volcánico.", foto_ciudad: "https://i.postimg.cc/25Pb2ZL5/image.png" },
+  { nombre: "CONSTANCIA", lat: -12.8333, lng: -75.8000, region: "Chumbivilcas, Cusco", ciudad: "Chumbivilcas", datoCurioso: "Región de tradiciones ancestrales, famosa por el 'Takanakuy', una festividad donde se resuelven conflictos mediante peleas amistosas.", foto_ciudad: "https://i.postimg.cc/DzbmJwjs/image.png" },
+  { nombre: "HUDBAY", lat: -12.8333, lng: -75.8000, region: "Chumbivilcas, Cusco", ciudad: "Chumbivilcas", datoCurioso: "Región de tradiciones ancestrales, famosa por el 'Takanakuy', una festividad donde se resuelven conflictos mediante peleas amistosas.", foto_ciudad: "https://i.postimg.cc/DzbmJwjs/image.png" },
+  { nombre: "CUAJONE", lat: -17.0833, lng: -70.8333, region: "Moquegua", ciudad: "Moquegua", datoCurioso: "Moquegua es famosa por sus vides y su tradicional piscos y vinos, además de su arquitectura colonial y costas pacíficas.", foto_ciudad: "https://i.postimg.cc/zvdq2s2v/image.png" },
+  { nombre: "QUELLAVECO", lat: -17.0500, lng: -70.7000, region: "Moquegua", ciudad: "Moquegua", datoCurioso: "Moquegua es famosa por sus vides y su tradicional piscos y vinos, además de su arquitectura colonial y costas pacíficas.", foto_ciudad: "https://i.postimg.cc/zvdq2s2v/image.png" },
+  { nombre: "PUCAMARCA", lat: -17.2000, lng: -70.4000, region: "Tacna", ciudad: "Tacna", datoCurioso: "Tacna, la 'Ciudad Heroica', es conocida por su patriotismo y su excelente gastronomía, especialmente sus picantes.", foto_ciudad: "https://i.postimg.cc/qMzrMZZP/image.png" },
+  { nombre: "CERRO LINDO", lat: -15.8167, lng: -74.5000, region: "Chincha, Ica", ciudad: "Chincha", datoCurioso: "Chincha es la cuna del arte afroperuano, famosa por su música, danzas como el festejo y su rica tradición culinaria.", foto_ciudad: "https://i.postimg.cc/hj2FK98q/image.png" },
+  { nombre: "EL PORVENIR", lat: -14.5000, lng: -75.5000, region: "Ica", ciudad: "Ica", datoCurioso: "Ica es el principal productor de pisco y vinos del Perú, además de hogar del oasis de Huacachina.", foto_ciudad: "https://i.postimg.cc/268J9Vsc/image.png" },
+  { nombre: "COBRIZA", lat: -13.5000, lng: -73.5000, region: "Huancavelica", ciudad: "Huancavelica", datoCurioso: "Huancavelica fue históricamente vital para el imperio español por sus minas de mercurio, indispensables para la extracción de plata.", foto_ciudad: "https://i.postimg.cc/9fcNzDQ0/image.png" },
+  { nombre: "SAN GABRIEL", lat: -15.5000, lng: -72.0000, region: "Arequipa", ciudad: "Arequipa", datoCurioso: "Arequipa, la 'Ciudad Blanca', es el centro económico del sur del Perú, famosa por su centro histórico construido con sillar volcánico.", foto_ciudad: "https://i.postimg.cc/25Pb2ZL5/image.png" },
+  { nombre: "RAURA", lat: -10.5000, lng: -76.7000, region: "Oyón, Lima", ciudad: "Oyón", datoCurioso: "Oyón es una provincia andina de la región Lima, caracterizada por su producción minera y sus paisajes de altura.", foto_ciudad: "https://i.postimg.cc/RFWrVWg9/image.png" },
+  { nombre: "CHORRILLOS", lat: -12.2000, lng: -77.0000, region: "Lima", ciudad: "Lima", datoCurioso: "Chorrillos es un distrito tradicional de Lima, famoso por su malecón y por ser escenario de la Batalla de San Juan en la Guerra del Pacífico.", foto_ciudad: "https://i.postimg.cc/CKtP7m4T/image.png" },
+  { nombre: "GAMBETTA", lat: -12.0500, lng: -77.1000, region: "Callao", ciudad: "Callao", datoCurioso: "El Callao es el principal puerto del Perú, con una historia marítima de más de 400 años y el Aeropuerto Internacional Jorge Chávez.", foto_ciudad: "https://i.postimg.cc/J0Q5fqjk/image.png" },
+  { nombre: "INDUSTRIAL", lat: -12.0000, lng: -77.0000, region: "Lima", ciudad: "Lima", datoCurioso: "Lima, la 'Ciudad de los Reyes', es la capital del Perú y alberga una de las gastronomías más reconocidas del mundo.", foto_ciudad: "https://i.postimg.cc/CKtP7m4T/image.png" },
+  { nombre: "CUSCO", lat: -13.5319, lng: -71.9675, region: "Cusco", ciudad: "Cusco", datoCurioso: "El Cusco fue la capital del Imperio Inca, es Patrimonio de la Humanidad y es la puerta de entrada a Machu Picchu.", foto_ciudad: "https://i.postimg.cc/QMnPPXh2/image.png" },
+  { nombre: "AREQUIPA", lat: -16.3989, lng: -71.5350, region: "Arequipa", ciudad: "Arequipa", datoCurioso: "Arequipa, la 'Ciudad Blanca', es el centro económico del sur del Perú, famosa por su centro histórico construido con sillar volcánico.", foto_ciudad: "https://i.postimg.cc/25Pb2ZL5/image.png" },
+  { nombre: "HUARAZ", lat: -9.5278, lng: -77.5278, region: "Ancash", ciudad: "Huaraz", datoCurioso: "Huaraz es la puerta de entrada a la Cordillera Blanca, la cadena tropical más alta del mundo, ideal para andinismo.", foto_ciudad: "https://i.postimg.cc/CM4CLcfk/image.png" },
+  { nombre: "HUANCAYO", lat: -12.0673, lng: -75.2100, region: "Junín", ciudad: "Huancayo", datoCurioso: "Huancayo es el corazón del Valle del Mantaro, famoso por su feria dominical y su tradicional gastronomía andina.", foto_ciudad: "https://i.postimg.cc/50SzytjJ/image.png" },
+  { nombre: "TRUJILLO", lat: -8.1116, lng: -79.0288, region: "La Libertad", ciudad: "Trujillo", datoCurioso: "Trujillo, la 'Ciudad de la Eterna Primavera', alberga las ruinas de Chan Chan, la ciudad de barro más grande de América.", foto_ciudad: "https://i.postimg.cc/J0hshc97/image.png" },
+  { nombre: "ICA", lat: -14.0678, lng: -75.7286, region: "Ica", ciudad: "Ica", datoCurioso: "Ica es el principal productor de pisco y vinos del Perú, además de hogar del oasis de Huacachina.", foto_ciudad: "https://i.postimg.cc/268J9Vsc/image.png" },
+  { nombre: "LIMA", lat: -12.0464, lng: -77.0428, region: "Lima", ciudad: "Lima", datoCurioso: "Lima, la 'Ciudad de los Reyes', es la capital del Perú y alberga una de las gastronomías más reconocidas del mundo.", foto_ciudad: "https://i.postimg.cc/CKtP7m4T/image.png" },
+  { nombre: "CHILE", lat: -33.4489, lng: -70.6693, region: "Santiago, Chile", ciudad: "Santiago", datoCurioso: "Santiago de Chile es una de las capitales más modernas de Sudamérica, rodeada por la imponente Cordillera de los Andes.", foto_ciudad: "https://i.postimg.cc/3wHWGHs5/image.png" },
+  { nombre: "LURIN", lat: -12.2500, lng: -76.8667, region: "Lima", ciudad: "Lima", datoCurioso: "Lurin es un distrito del sur de Lima, conocido por sus tradicionales panaderías y las ruinas de Pachacámac.", foto_ciudad: "https://i.postimg.cc/CKtP7m4T/image.png" },
+  { nombre: "CARAVELI", lat: -15.7833, lng: -73.3667, region: "Arequipa", ciudad: "Caravelí", datoCurioso: "Caravelí es una provincia arequipeña conocida por sus vides de altura, produciendo vinos y piscos de gran calidad.", foto_ciudad: "https://i.postimg.cc/c4pJqS4g/image.png" },
+];
 
-export function MapaMinas() {
-  const { ots, cronograma, tecnicos, cargarDatosSilencioso } = useStore();
-  const mapRef = useRef<L.Map | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const markersRef = useRef<L.CircleMarker[]>([]);
-  const [selectedMina, setSelectedMina] = useState<MinaAgrupada | null>(null);
-  const [query, setQuery] = useState("");
-  const [actualizando, setActualizando] = useState(false);
-  const [imgKey, setImgKey] = useState(0);
+// Función para buscar coordenada por sede
+export function findMinaCoord(sede: string): MinaCoord | null {
+  if (!sede) return null;
+  const sedeUpper = sede.toUpperCase().trim();
   
-  // NUEVO: Estado para sedes dinámicas desde Excel
-  const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
-
-  const hoy = new Date();
-  const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
-  const [inputFin, setInputFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
+  let found = MINAS_PERU.find(m => m.nombre === sedeUpper);
+  if (found) return found;
   
-  const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
-  const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
-
-  const handleActualizar = async () => {
-    setActualizando(true);
-    await cargarDatosSilencioso();
-    // Volver a cargar sedes del Excel
-    try {
-      const res = await fetch("/api/sedes", { cache: "no-store" });
-      const json = await res.json();
-      if (json.ok) setSedesExcel(json.data);
-    } catch (err) {
-      console.error("Error al cargar sedes:", err);
-    }
-    setActualizando(false);
-  };
-
-  // Cargar sedes del Excel al montar
-  useEffect(() => {
-    fetch("/api/sedes", { cache: "no-store" })
-      .then(res => res.json())
-      .then(json => { if (json.ok) setSedesExcel(json.data); })
-      .catch(err => console.error("Error:", err));
-  }, []);
-
-  const handleAplicarFechas = () => {
-    setFechaInicio(inputInicio);
-    setFechaFin(inputFin);
-  };
-
-  // FIX: Buscar primero en Excel, luego en minasData.ts
-  const getCoordDeOt = (ot: OT): MinaCoord | null => {
-    const buscarEn = (texto: string): MinaCoord | null => {
-      if (!texto || !texto.trim()) return null;
-      const textoUpper = texto.toUpperCase().trim();
-      
-      // 1. Buscar en sedes del Excel
-      let found = sedesExcel.find(s => s.nombre.toUpperCase() === textoUpper);
-      if (found) return { ...found };
-      
-      found = sedesExcel.find(s => textoUpper.includes(s.nombre.toUpperCase()) || s.nombre.toUpperCase().includes(textoUpper));
-      if (found) return { ...found };
-      
-      // 2. Fallback a minasData.ts
-      return findMinaCoord(texto);
-    };
-
-    return buscarEn(ot.sede) || buscarEn(ot.cliente);
-  };
-
-  const otsValidas = useMemo(() => {
-    return ots.filter(o => o.estado !== "PERDIDO" && (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE"));
-  }, [ots]);
-
-  const minasAgrupadas = useMemo(() => {
-    const grupos: Record<string, MinaAgrupada> = {};
-    for (const ot of otsValidas) {
-      const coord = getCoordDeOt(ot);
-      if (!coord) continue;
-      const key = coord.nombre;
-      if (!grupos[key]) grupos[key] = { coord, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
-      grupos[key].ots.push(ot);
-      grupos[key].total++;
-      if (ot.estado === "EN PROCESO") grupos[key].enProceso++;
-      else if (ot.estado === "FINALIZADO") grupos[key].finalizado++;
-      else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
-    }
-    return Object.values(grupos);
-  }, [otsValidas, sedesExcel]);
-
-  const minasFiltradas = useMemo(() => {
-    if (!query) return minasAgrupadas;
-    const q = query.toLowerCase();
-    return minasAgrupadas.filter(g => 
-      g.coord.nombre.toLowerCase().includes(q) ||
-      g.coord.region.toLowerCase().includes(q) ||
-      g.ots.some(ot => ot.codigo.toLowerCase().includes(q) || ot.cliente.toLowerCase().includes(q))
-    );
-  }, [minasAgrupadas, query]);
-
-  const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
-    const tecnicosMap: Record<string, TecnicoAgrupado> = {};
-    
-    for (const e of Object.values(cronograma)) {
-      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
-      if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
-      
-      if (e.ots_asignadas && e.ots_asignadas !== "—") {
-        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
-        const perteneceAMina = codigos.some(cod => mina.ots.some(ot => ot.codigo === cod));
-        
-        if (perteneceAMina) {
-          const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
-          if (tecnico && tecnico.activo) {
-            if (!tecnicosMap[tecnico.id]) {
-              tecnicosMap[tecnico.id] = {
-                tecnico,
-                fechaInicio: e.fecha,
-                fechaFin: e.fecha,
-                actividades: new Set([e.actividad]),
-              };
-            } else {
-              if (e.fecha < tecnicosMap[tecnico.id].fechaInicio) {
-                tecnicosMap[tecnico.id].fechaInicio = e.fecha;
-              }
-              if (e.fecha > tecnicosMap[tecnico.id].fechaFin) {
-                tecnicosMap[tecnico.id].fechaFin = e.fecha;
-              }
-              tecnicosMap[tecnico.id].actividades.add(e.actividad);
-            }
-          }
-        }
-      }
-    }
-    return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
-  };
-
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-    const map = L.map(containerRef.current, { center: [-9.1900, -75.0152], zoom: 5, zoomControl: true, scrollWheelZoom: true });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap", maxZoom: 18 }).addTo(map);
-    mapRef.current = map;
-    return () => { map.remove(); mapRef.current = null; };
-  }, []);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
-    markersRef.current.forEach(m => m.remove());
-    markersRef.current = [];
-
-    for (const mina of minasFiltradas) {
-      const { coord, enProceso, finalizado, pendiente, total } = mina;
-      let color = "#6b7280";
-      if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b";
-      else if (finalizado > 0) color = "#10b981";
-      else if (pendiente > 0) color = "#3b82f6";
-      
-      const radius = Math.min(8 + total * 2, 25);
-      const marker = L.circleMarker([coord.lat, coord.lng], {
-        radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8
-      }).addTo(mapRef.current!);
-
-      const popupHtml = `
-        <div style="font-family: -apple-system, sans-serif; min-width: 180px;">
-          <div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div>
-          <div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div>
-          <div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;">
-            <span style="color: #f59e0b;">⚡ ${enProceso}</span>
-            <span style="color: #10b981;">✓ ${finalizado}</span>
-            <span style="color: #3b82f6;">⏳ ${pendiente}</span>
-          </div>
-          <div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div>
-        </div>
-      `;
-      marker.bindPopup(popupHtml);
-      marker.on("click", () => setSelectedMina(mina));
-      markersRef.current.push(marker);
-    }
-  }, [minasFiltradas]);
-
-  const zoomToMina = (mina: MinaAgrupada) => {
-    if (!mapRef.current) return;
-    mapRef.current.flyTo([mina.coord.lat, mina.coord.lng], 8, { duration: 1.2 });
-    setSelectedMina(mina);
-  };
-
-  const getIniciales = (nombre: string) => {
-    const partes = nombre.trim().split(/\s+/);
-    return partes.length >= 2 ? (partes[0][0] + partes[1][0]).toUpperCase() : nombre.substring(0, 2).toUpperCase();
-  };
-
-  const fmtFecha = (iso: string) => {
-    const [y, m, d] = iso.split("-");
-    return `${d}/${m}`;
-  };
-
-  return (
-    <div className="flex h-full overflow-hidden">
-      <div className="w-72 shrink-0 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-3 border-b border-gray-200 bg-white shrink-0">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">🗺️ Mapa de Minas</div>
-            <button onClick={handleActualizar} disabled={actualizando} className="p-1 text-gray-500 hover:text-[#E91E63] disabled:opacity-50" title="Actualizar datos">
-              <RefreshCw size={14} className={actualizando ? "animate-spin" : ""} />
-            </button>
-          </div>
-          <div className="relative mb-2">
-            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar mina, OT o cliente..."
-              className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
-            />
-          </div>
-          <div className="space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-gray-600">
-              <Calendar size={10} className="text-gray-400" />
-              <span className="font-semibold">Rango de fechas:</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <input type="date" value={inputInicio} onChange={(e) => setInputInicio(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
-              <span className="text-gray-400">→</span>
-              <input type="date" value={inputFin} onChange={(e) => setInputFin(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
-            </div>
-            <button onClick={handleAplicarFechas} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
-              <Check size={10} /> Aplicar fechas
-            </button>
-          </div>
-        </div>
-
-        <div className="p-2 border-b border-gray-200 bg-gray-50 shrink-0">
-          <div className="text-[10px] font-bold text-gray-500 uppercase mb-1.5">Estado</div>
-          <div className="flex gap-2 flex-wrap text-[10px]">
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>En proceso</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>Finalizado</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>Pendiente</span>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {minasFiltradas.length === 0 ? (
-            <div className="p-4 text-center text-xs text-gray-400">No se encontraron minas</div>
-          ) : (
-            minasFiltradas.map((mina) => (
-              <div
-                key={mina.coord.nombre}
-                onClick={() => zoomToMina(mina)}
-                className={`p-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
-                  selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <div
-                    className="w-3 h-3 rounded-full shrink-0"
-                    style={{
-                      backgroundColor: mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b"
-                        : mina.finalizado > 0 ? "#10b981"
-                        : mina.pendiente > 0 ? "#3b82f6"
-                        : "#6b7280"
-                    }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
-                    <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
-                  </div>
-                  <div className="text-xs font-bold text-gray-700">{mina.total}</div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-        <div className="p-2 border-t border-gray-200 bg-white text-[10px] text-gray-400 text-center shrink-0">
-          {minasFiltradas.length} mina(s) · {otsValidas.length} OT(s)
-        </div>
-      </div>
-
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex-1 relative">
-          <div ref={containerRef} className="w-full h-full" style={{ minHeight: "400px" }} />
-        </div>
-
-        {selectedMina && (
-          <div className="h-80 shrink-0 bg-white border-t border-gray-200 flex">
-            <div className="flex-1 flex flex-col border-r border-gray-200 min-w-0">
-              <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
-                <div>
-                  <div className="text-sm font-bold text-white">{selectedMina.coord.nombre}</div>
-                  <div className="text-[10px] text-white/60">📍 {selectedMina.coord.region}</div>
-                </div>
-                <button onClick={() => setSelectedMina(null)} className="text-white/60 hover:text-white p-1">
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-3">
-                <div className="flex gap-3 mb-3 text-xs">
-                  <span className="text-yellow-600">⚡ {selectedMina.enProceso} en proceso</span>
-                  <span className="text-green-600">✓ {selectedMina.finalizado} finalizado</span>
-                  <span className="text-blue-600">⏳ {selectedMina.pendiente} pendiente</span>
-                </div>
-                
-                {(() => {
-                  const tecnicosMina = getTecnicosEnMina(selectedMina);
-                  return (
-                    <>
-                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">
-                        Técnicos en proyecto ({tecnicosMina.length}):
-                      </div>
-                      <div className="space-y-1 mb-3">
-                        {tecnicosMina.map((t, i) => (
-                          <div key={i} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
-                            <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
-                              {t.tecnico.foto_url ? (
-                                <img src={t.tecnico.foto_url} alt={t.tecnico.nombre} className="w-full h-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold text-gray-500">{getIniciales(t.tecnico.nombre)}</div>
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-semibold text-gray-900 truncate">{t.tecnico.nombre}</div>
-                              <div className="text-[10px] text-gray-500 truncate">
-                                {Array.from(t.actividades).join(", ")}
-                              </div>
-                            </div>
-                            <div className="text-[10px] text-gray-600 shrink-0 font-medium">
-                              {t.fechaInicio === t.fechaFin 
-                                ? fmtFecha(t.fechaInicio) 
-                                : `${fmtFecha(t.fechaInicio)} → ${fmtFecha(t.fechaFin)}`
-                              }
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  );
-                })()}
-
-                <div className="text-[10px] font-bold text-gray-500 uppercase mb-1">OTs en esta mina:</div>
-                <div className="space-y-1">
-                  {selectedMina.ots.map((ot) => {
-                    const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700"
-                      : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700"
-                      : "bg-blue-100 text-blue-700";
-                    return (
-                      <div key={ot.codigo} className="p-1.5 rounded border border-gray-200 flex items-center gap-2 hover:bg-gray-50">
-                        <div className="text-[10px] font-mono font-bold text-gray-900 w-20">{ot.codigo}</div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
-                        </div>
-                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>
-                          {ot.estado.slice(0, 3)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="w-56 shrink-0 flex flex-col bg-white">
-              <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <Info size={12} className="text-[#E91E63]" />
-                  <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
-                </div>
-                <button 
-                  onClick={() => setImgKey(prev => prev + 1)} 
-                  className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200"
-                  title="Recargar imagen"
-                >
-                  <RefreshCw size={10} />
-                </button>
-              </div>
-              <div className="h-28 relative overflow-hidden bg-gray-100">
-                <img 
-                  key={`${selectedMina.coord.ciudad}-${imgKey}`}
-                  src={`${selectedMina.coord.foto_ciudad}?t=${imgKey}`} 
-                  alt={selectedMina.coord.ciudad}
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-                <div className="absolute bottom-1 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">
-                  {selectedMina.coord.ciudad}
-                </div>
-              </div>
-              <div className="flex-1 p-3 flex flex-col">
-                <div className="text-[10px] text-gray-600 leading-relaxed flex-1">
-                  {selectedMina.coord.datoCurioso}
-                </div>
-                <div className="mt-2 pt-2 border-t border-gray-100">
-                  <div className="text-[9px] text-gray-400 uppercase tracking-wider">Región</div>
-                  <div className="text-[10px] text-gray-700 font-semibold">{selectedMina.coord.region}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  found = MINAS_PERU.find(m => sedeUpper.includes(m.nombre));
+  if (found) return found;
+  
+  found = MINAS_PERU.find(m => m.nombre.includes(sedeUpper));
+  if (found) return found;
+  
+  return null;
 }
