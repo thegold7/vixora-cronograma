@@ -24,28 +24,16 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
   return (
     <>
       <aside className="w-16 lg:w-56 shrink-0 flex flex-col text-white" style={{ backgroundColor: VIXORA_COLORS.dark }}>
-        {/* Logo Real + Texto adaptado */}
-        <div className="p-3 border-b border-white/10 flex items-center gap-2">
+        {/* Logo completo */}
+        <div className="p-3 border-b border-white/10 flex items-center justify-center">
           <img 
-            src="https://i.postimg.cc/RZnmxSSF/Gemini-Generated-Image-a0r57ia0r57ia0r5-(1)-Photoroom.png" 
-            alt="VIXORA" 
-            className="h-8 w-auto lg:h-10 rounded object-contain shrink-0"
+            src="https://i.postimg.cc/YqT9Wy0V/Gemini-Generated-Image-t218vtt218vtt218-Photoroom.png" 
+            alt="VIXORA Cronograma" 
+            className="h-10 w-auto lg:h-12 object-contain"
             onError={(e) => {
               (e.target as HTMLImageElement).style.display = 'none';
             }}
           />
-          <span 
-            className="hidden lg:block text-white tracking-tight"
-            style={{ 
-              fontFamily: "'Arial Black', 'Helvetica Neue', Arial, sans-serif",
-              fontWeight: 900,
-              fontSize: '13px',
-              textTransform: 'uppercase',
-              letterSpacing: '-0.02em',
-            }}
-          >
-            Cronograma
-          </span>
         </div>
         
         <nav className="flex-1 p-2 space-y-1">
