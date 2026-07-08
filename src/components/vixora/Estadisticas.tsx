@@ -139,33 +139,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
   const gaugeCirc = 2 * Math.PI * 60;
   const gaugeOffset = gaugeCirc - (stats.cargaPct / 100) * gaugeCirc;
 
-  // Generar semanas para heatmap (formato GitHub)
-  const weeks = useMemo(() => {
-    const wks: (Date | null)[][] = [];
-    let currentWeek: (Date | null)[] = [];
-    const jan1 = new Date(stats.yearActual, 0, 1);
-    const startDayOfWeek = jan1.getDay(); // 0=Dom, 1=Lun...
-    const offset = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
-    
-    for (let i = 0; i < offset; i++) currentWeek.push(null);
-    
-    for (let m = 0; m < 12; m++) {
-      const last = new Date(stats.yearActual, m + 1, 0).getDate();
-      for (let d = 1; d <= last; d++) {
-        currentWeek.push(new Date(stats.yearActual, m, d));
-        if (currentWeek.length === 7) {
-          wks.push(currentWeek);
-          currentWeek = [];
-        }
-      }
-    }
-    if (currentWeek.length > 0) {
-      while (currentWeek.length < 7) currentWeek.push(null);
-      wks.push(currentWeek);
-    }
-    return wks;
-  }, [stats.yearActual]);
-
   const getHeatColor = (count: number) => {
     if (count === 0) return "#ebedf0";
     const intensity = count / stats.maxHeat;
@@ -275,76 +248,50 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* HEATMAP TIPO GITHUB (Compacto y ordenado) */}
+      {/* HEATMAP HORIZONTAL (12 filas x 31 columnas) */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6 overflow-x-auto">
         <h3 className="text-sm font-bold text-gray-700 mb-3">Heatmap de Actividad {stats.yearActual}</h3>
-        <div className="flex flex-col gap-1">
-          {/* Etiquetas de meses arriba */}
-          <div className="flex gap-[3px] ml-6">
-            {weeks.map((week, idx) => {
-              const firstDay = week.find(d => d && d.getDate() <= 7);
-              const showLabel = firstDay && (idx === 0 || (idx > 0 && weeks[idx-1].find(d => d && d.getDate() <= 7)?.getMonth() !== firstDay.getMonth()));
-              return (
-                <div key={idx} style={{ width: "11px", position: "relative" }}>
-                  {showLabel && (
-                    <span style={{ position: "absolute", top: 0, left: 0, fontSize: "9px", color: "#9ca3af", whiteSpace: "nowrap" }}>
-                      {MESES_CORTOS[firstDay.getMonth()]}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+        <div className="flex flex-col gap-[2px]">
+          {/* Encabezado de días (1-31) */}
+          <div className="flex gap-[2px] ml-8">
+            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+              <div key={d} className="w-[10px] text-[7px] text-gray-400 text-center">{d}</div>
+            ))}
           </div>
           
-          {/* Grid de semanas y días */}
-          <div className="flex gap-1">
-            {/* Etiquetas de días a la izquierda */}
-            <div className="flex flex-col gap-[3px] mr-1 text-[8px] text-gray-400 justify-around">
-              <span style={{ height: "11px", lineHeight: "11px" }}>Lun</span>
-              <span style={{ height: "11px", lineHeight: "11px" }}></span>
-              <span style={{ height: "11px", lineHeight: "11px" }}>Mié</span>
-              <span style={{ height: "11px", lineHeight: "11px" }}></span>
-              <span style={{ height: "11px", lineHeight: "11px" }}>Vie</span>
-              <span style={{ height: "11px", lineHeight: "11px" }}></span>
-              <span style={{ height: "11px", lineHeight: "11px" }}></span>
-            </div>
-            
-            {/* Cuadrículas */}
-            <div className="flex gap-[3px]">
-              {weeks.map((week, wIdx) => (
-                <div key={wIdx} className="flex flex-col gap-[3px]">
-                  {week.map((day, dIdx) => {
-                    if (!day) return <div key={dIdx} style={{ width: "11px", height: "11px" }} />;
-                    const iso = formatFechaISO(day);
+          {/* Filas de meses */}
+          {MESES_CORTOS.map((mes, mIdx) => {
+            const diasMes = new Date(stats.yearActual, mIdx + 1, 0).getDate();
+            return (
+              <div key={mIdx} className="flex items-center gap-[2px]">
+                <div className="w-8 text-[9px] text-gray-500 font-medium">{mes}</div>
+                <div className="flex gap-[2px]">
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map(d => {
+                    if (d > diasMes) return <div key={d} className="w-[10px] h-[10px]" />;
+                    const iso = `${stats.yearActual}-${String(mIdx + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                     const count = stats.heatmapData[iso] || 0;
                     return (
                       <div
-                        key={dIdx}
+                        key={d}
                         title={`${iso}: ${count} asignación(es)`}
-                        style={{
-                          width: "11px",
-                          height: "11px",
-                          borderRadius: "2px",
-                          backgroundColor: getHeatColor(count),
-                        }}
+                        className="w-[10px] h-[10px] rounded-sm"
+                        style={{ backgroundColor: getHeatColor(count) }}
                       />
                     );
                   })}
                 </div>
-              ))}
-            </div>
-          </div>
-          
-          {/* Leyenda */}
-          <div className="flex items-center gap-1 mt-2 text-[8px] text-gray-500 justify-end">
-            <span>Menos</span>
-            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#ebedf0" }}></div>
-            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#ffcdd2" }}></div>
-            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#ff8a80" }}></div>
-            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#e53935" }}></div>
-            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#b3261e" }}></div>
-            <span>Más</span>
-          </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-1 mt-3 text-[8px] text-gray-500">
+          <span>Menos</span>
+          <div className="w-[10px] h-[10px] rounded-sm bg-gray-100"></div>
+          <div className="w-[10px] h-[10px] rounded-sm bg-red-200"></div>
+          <div className="w-[10px] h-[10px] rounded-sm bg-red-300"></div>
+          <div className="w-[10px] h-[10px] rounded-sm bg-red-400"></div>
+          <div className="w-[10px] h-[10px] rounded-sm bg-red-700"></div>
+          <span>Más</span>
         </div>
       </div>
 
