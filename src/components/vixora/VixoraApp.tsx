@@ -11,7 +11,7 @@ import { Toast } from "@/components/vixora/Toast";
 import { TecnicosManager } from "@/components/vixora/TecnicosManager";
 import { Estadisticas } from "@/components/vixora/Estadisticas";
 import { MapaMinas } from "@/components/vixora/MapaMinas";
-import { ModalExportar } from "@/components/vixora/ModalExportar";
+import { AdminPanel } from "@/components/vixora/AdminPanel";
 import { useEffect, useState, useRef } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -36,7 +36,7 @@ export function VixoraApp() {
     showToast,
   } = useStore();
 
-  const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas" | "mapa">("cronograma");
+  const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas" | "mapa" | "admin">("cronograma");
 
   const calendarioRef = useRef<HTMLDivElement>(null);
 
@@ -174,6 +174,10 @@ export function VixoraApp() {
 
               {seccion === "mapa" && (
                 <MapaMinas />
+              )}
+
+              {seccion === "admin" && modoAcceso === "editor" && (
+                <AdminPanel />
               )}
             </div>
 
