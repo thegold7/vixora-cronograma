@@ -24,8 +24,17 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
   return (
     <>
       <aside className="w-16 lg:w-56 shrink-0 flex flex-col text-white" style={{ backgroundColor: VIXORA_COLORS.dark }}>
+        {/* Logo Real */}
         <div className="p-3 border-b border-white/10 flex items-center gap-2">
-          <div className="px-2 py-1 rounded font-bold text-sm flex items-center" style={{ backgroundColor: VIXORA_COLORS.primary }}>VIX</div>
+          <img 
+            src="https://i.postimg.cc/RZnmxSSF/Gemini-Generated-Image-a0r57ia0r57ia0r5-(1)-Photoroom.png" 
+            alt="VIXORA Cronograma" 
+            className="h-8 w-auto lg:h-10 rounded object-contain"
+            onError={(e) => {
+              // Fallback por si la imagen no carga
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
           <span className="hidden lg:block text-xs text-white/70">Cronograma</span>
         </div>
         
