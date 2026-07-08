@@ -6,7 +6,7 @@ import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import { findMinaCoord, type MinaCoord } from "@/lib/minasData";
 import type { OT, Tecnico } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, MapPin } from "lucide-react";
+import { Search, X, Calendar, Info, RefreshCw, MapPin, Check } from "lucide-react";
 
 interface MinaAgrupada {
   coord: MinaCoord;
@@ -33,14 +33,39 @@ export function MapaMinas() {
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
   
+  // Fechas: input (no aplicado) y aplicado
   const hoy = new Date();
-  const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), 0, 1)));
-  const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), 11, 31)));
+  const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
+  const [inputFin, setInputFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
   
+  // Fechas aplicadas (default: mes actual)
+  const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
+  const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
+
   const handleActualizar = async () => {
     setActualizando(true);
     await cargarDatos();
     setActualizando(false);
+  };
+
+  const handleAplicarFechas = () => {
+    setFechaInicio(inputInicio);
+    setFechaFin(inputFin);
+  };
+
+  // FIX: buscar coordenada por sede O por cliente (porque muchas OTs tienen sede vacía)
+  const getCoordDeOt = (ot: OT): MinaCoord | null => {
+    // 1. Intentar por sede
+    if (ot.sede && ot.sede.trim()) {
+      const c = findMinaCoord(ot.sede);
+      if (c) return c;
+    }
+    // 2. Intentar por cliente
+    if (ot.cliente && ot.cliente.trim()) {
+      const c = findMinaCoord(ot.cliente);
+      if (c) return c;
+    }
+    return null;
   };
 
   const otsValidas = useMemo(() => {
@@ -50,7 +75,7 @@ export function MapaMinas() {
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
     for (const ot of otsValidas) {
-      const coord = findMinaCoord(ot.sede);
+      const coord = getCoordDeOt(ot);
       if (!coord) continue;
       const key = coord.nombre;
       if (!grupos[key]) grupos[key] = { coord, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
@@ -63,7 +88,6 @@ export function MapaMinas() {
     return Object.values(grupos);
   }, [otsValidas]);
 
-  // FIX: Búsqueda por OT corregida (case insensitive)
   const minasFiltradas = useMemo(() => {
     if (!query) return minasAgrupadas;
     const q = query.toLowerCase();
@@ -74,17 +98,33 @@ export function MapaMinas() {
     );
   }, [minasAgrupadas, query]);
 
+  // FIX: mostrar técnicos en proyecto/servicio en el rango de fechas
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoEnMina[] => {
     const result: TecnicoEnMina[] = [];
     for (const e of Object.values(cronograma)) {
+      // Filtrar por rango de fechas
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+      
+      // Solo actividades de proyecto/servicio (inamovibles)
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
+      
+      // Verificar si alguna OT asignada pertenece a esta mina
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
-        const perteneceAMina = codigos.some(cod => mina.ots.some(ot => ot.codigo === cod));
+        const perteneceAMina = codigos.some(cod => 
+          mina.ots.some(ot => ot.codigo === cod)
+        );
+        
         if (perteneceAMina) {
           const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
-          if (tecnico && tecnico.activo) result.push({ tecnico, fecha: e.fecha, actividad: e.actividad, ots: e.ots_asignadas });
+          if (tecnico && tecnico.activo) {
+            result.push({
+              tecnico,
+              fecha: e.fecha,
+              actividad: e.actividad,
+              ots: e.ots_asignadas,
+            });
+          }
         }
       }
     }
@@ -172,11 +212,34 @@ export function MapaMinas() {
               className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
             />
           </div>
-          <div className="flex items-center gap-1 text-[10px]">
-            <Calendar size={10} className="text-gray-400" />
-            <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
-            <span className="text-gray-400">→</span>
-            <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
+          {/* Rango de fechas con botón aplicar */}
+          <div className="space-y-1">
+            <div className="flex items-center gap-1 text-[10px] text-gray-600">
+              <Calendar size={10} className="text-gray-400" />
+              <span className="font-semibold">Rango de fechas:</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <input
+                type="date"
+                value={inputInicio}
+                onChange={(e) => setInputInicio(e.target.value)}
+                className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded"
+              />
+              <span className="text-gray-400">→</span>
+              <input
+                type="date"
+                value={inputFin}
+                onChange={(e) => setInputFin(e.target.value)}
+                className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded"
+              />
+            </div>
+            <button
+              onClick={handleAplicarFechas}
+              className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]"
+            >
+              <Check size={10} />
+              Aplicar fechas
+            </button>
           </div>
         </div>
 
@@ -310,14 +373,14 @@ export function MapaMinas() {
               </div>
             </div>
 
-            {/* Columna 2: Dato curioso (compacto) */}
+            {/* Columna 2: Dato curioso (compacto) con imagen */}
             <div className="w-56 shrink-0 flex flex-col bg-white">
               <div className="px-3 py-2 border-b border-gray-200 flex items-center gap-2 bg-gray-50">
                 <Info size={12} className="text-[#E91E63]" />
                 <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
               </div>
-              {/* Imagen placeholder de la ciudad */}
-              <div className="h-24 bg-gradient-to-br from-pink-100 to-purple-100 flex items-center justify-center relative overflow-hidden">
+              {/* Imagen de la ciudad (placeholder con gradiente) */}
+              <div className="h-24 bg-gradient-to-br from-pink-100 via-purple-100 to-blue-100 flex items-center justify-center relative overflow-hidden">
                 <MapPin size={32} className="text-[#E91E63] opacity-50" />
                 <div className="absolute bottom-1 left-2 text-xs font-bold text-gray-800 bg-white/70 px-2 py-0.5 rounded">
                   {selectedMina.coord.ciudad}
