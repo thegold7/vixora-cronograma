@@ -467,19 +467,6 @@ export async function addSede(sede: {
   return { ok: true };
 }
 
-export async function deleteSede(nombre: string): Promise<{ ok: true }> {
-  const sheets = getClient();
-  const all = await getSedes();
-  const filtered = all.filter((s) => s.nombre.toUpperCase() !== nombre.toUpperCase());
-  
-  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad"]];
-  const rows = filtered.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
-
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: getSheetId(),
-    range: "Sedes!A1:Z",
-  });
-
 export async function updateSede(
   nombreOriginal: string,
   newData: {
@@ -507,10 +494,13 @@ export async function updateSede(
   return { ok: true };
 }
 
-export async function replaceAllSedes(sedes: Sede[]): Promise<{ ok: true }> {
+export async function deleteSede(nombre: string): Promise<{ ok: true }> {
   const sheets = getClient();
+  const all = await getSedes();
+  const filtered = all.filter((s) => s.nombre.toUpperCase() !== nombre.toUpperCase());
+  
   const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad"]];
-  const rows = sedes.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
+  const rows = filtered.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
@@ -526,6 +516,16 @@ export async function replaceAllSedes(sedes: Sede[]): Promise<{ ok: true }> {
 
   return { ok: true };
 }
+
+export async function replaceAllSedes(sedes: Sede[]): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad"]];
+  const rows = sedes.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: getSheetId(),
+    range: "Sedes!A1:Z",
+  });
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(),
