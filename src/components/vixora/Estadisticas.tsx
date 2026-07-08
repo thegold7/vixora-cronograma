@@ -4,6 +4,7 @@ import { useStore } from "@/lib/store";
 import { COLOR_HEX, type Tecnico, type Actividad, type CronogramaMap, type OT } from "@/lib/types";
 import { useMemo, useState } from "react";
 import { RefreshCw, Search, TrendingUp, Users, Briefcase, Calendar } from "lucide-react";
+import { formatFechaISO } from "@/lib/store";
 
 interface Props {
   tecnicos: Tecnico[];
@@ -14,7 +15,6 @@ interface Props {
 
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-const DOW_ES = ["D", "L", "M", "M", "J", "V", "S"];
 
 export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) {
   const { cargarDatos } = useStore();
@@ -105,7 +105,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
 
     const statsPorTecnicoLista = activos.map((t) => ({ tecnico: t, count: porTecnico[t.id] ?? 0 })).sort((a, b) => b.count - a.count);
 
-    // Heatmap: agrupar por día del año (solo año actual)
+    // Heatmap data
     const yearActual = hoy.getFullYear();
     const heatmapData: Record<string, number> = {};
     for (const e of Object.values(cronograma)) {
@@ -136,27 +136,49 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${fin - inicio > 180 ? 1 : 0} 1 ${x2} ${y2} Z`;
   };
 
-  // Gauge circular para % carga
   const gaugeCirc = 2 * Math.PI * 60;
   const gaugeOffset = gaugeCirc - (stats.cargaPct / 100) * gaugeCirc;
 
-  // Generar días del año para heatmap
-  const diasAño = useMemo(() => {
-    const dias: Date[] = [];
+  // Generar semanas para heatmap (formato GitHub)
+  const weeks = useMemo(() => {
+    const wks: (Date | null)[][] = [];
+    let currentWeek: (Date | null)[] = [];
+    const jan1 = new Date(stats.yearActual, 0, 1);
+    const startDayOfWeek = jan1.getDay(); // 0=Dom, 1=Lun...
+    const offset = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
+    
+    for (let i = 0; i < offset; i++) currentWeek.push(null);
+    
     for (let m = 0; m < 12; m++) {
       const last = new Date(stats.yearActual, m + 1, 0).getDate();
-      for (let d = 1; d <= last; d++) dias.push(new Date(stats.yearActual, m, d));
+      for (let d = 1; d <= last; d++) {
+        currentWeek.push(new Date(stats.yearActual, m, d));
+        if (currentWeek.length === 7) {
+          wks.push(currentWeek);
+          currentWeek = [];
+        }
+      }
     }
-    return dias;
+    if (currentWeek.length > 0) {
+      while (currentWeek.length < 7) currentWeek.push(null);
+      wks.push(currentWeek);
+    }
+    return wks;
   }, [stats.yearActual]);
 
   const getHeatColor = (count: number) => {
-    if (count === 0) return "#f3f4f6";
+    if (count === 0) return "#ebedf0";
     const intensity = count / stats.maxHeat;
     if (intensity > 0.75) return "#b3261e";
     if (intensity > 0.5) return "#e53935";
     if (intensity > 0.25) return "#ff8a80";
     return "#ffcdd2";
+  };
+
+  const colorLabels: Record<string, string> = {
+    rojo: "Inamovible",
+    amarillo: "Spot",
+    verde: "Backlog",
   };
 
   return (
@@ -172,7 +194,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </button>
       </div>
 
-      {/* Selector de rango */}
       <div className="mb-6 p-3 bg-white border border-gray-200 rounded-lg flex items-center gap-3 flex-wrap">
         <span className="text-xs font-semibold text-gray-700">Rango:</span>
         <input type="date" value={inputInicio} onChange={(e) => setInputInicio(e.target.value)} className="px-2 py-1 text-xs border border-gray-200 rounded" />
@@ -185,7 +206,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         {!rangoAplicado.inicio && <span className="text-[10px] text-gray-400 italic">(mes actual)</span>}
       </div>
 
-      {/* KPIs grandes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KpiCard icon={<Users size={20} />} label="Personal Total" value={stats.total} sub="técnicos activos" color="#1d1d1f" />
         <KpiCard icon={<Briefcase size={20} />} label="En Proyecto" value={stats.enProyecto} sub={`hoy · ${donaPct(stats.enProyecto)}%`} color="#b3261e" />
@@ -193,9 +213,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         <KpiCard icon={<TrendingUp size={20} />} label="Asignaciones" value={stats.totalEntries} sub="en el período" color="#E91E63" />
       </div>
 
-      {/* Gauge de carga + Dona de estado */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        {/* Gauge circular de carga */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col items-center">
           <h3 className="text-sm font-bold text-gray-700 mb-3">% Carga Laboral</h3>
           <div className="relative w-40 h-40">
@@ -217,7 +235,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           )}
         </div>
 
-        {/* Dona de estado del personal */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col items-center">
           <h3 className="text-sm font-bold text-gray-700 mb-3">Estado Hoy</h3>
           <svg width="160" height="160" viewBox="0 0 160 160">
@@ -235,9 +252,8 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           </div>
         </div>
 
-        {/* Distribución por color */}
         <div className="bg-white border border-gray-200 rounded-lg p-4">
-          <h3 className="text-sm font-bold text-gray-700 mb-3">Distribución por Color</h3>
+          <h3 className="text-sm font-bold text-gray-700 mb-3">Distribución por Categoría</h3>
           <div className="space-y-3">
             {(["rojo", "amarillo", "verde"] as const).map((c) => {
               const hex = COLOR_HEX[c];
@@ -246,7 +262,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
               return (
                 <div key={c}>
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="font-semibold capitalize" style={{ color: hex.text }}>{c}</span>
+                    <span className="font-semibold" style={{ color: hex.text }}>{colorLabels[c]}</span>
                     <span className="text-gray-600">{count} ({pct}%)</span>
                   </div>
                   <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -259,166 +275,190 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* HEATMAP de actividad anual */}
+      {/* HEATMAP TIPO GITHUB (Compacto y ordenado) */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6 overflow-x-auto">
         <h3 className="text-sm font-bold text-gray-700 mb-3">Heatmap de Actividad {stats.yearActual}</h3>
-        <div className="flex gap-1 min-w-max">
-          {MESES_CORTOS.map((mes, mIdx) => {
-            const diasMes = diasAño.filter((d) => d.getMonth() === mIdx);
-            return (
-              <div key={mIdx} className="flex flex-col gap-1">
-                <div className="text-[9px] text-gray-500 text-center mb-1">{mes}</div>
-                <div className="flex flex-col gap-0.5">
-                  {diasMes.map((d) => {
-                    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        <div className="flex flex-col gap-1">
+          {/* Etiquetas de meses arriba */}
+          <div className="flex gap-[3px] ml-6">
+            {weeks.map((week, idx) => {
+              const firstDay = week.find(d => d && d.getDate() <= 7);
+              const showLabel = firstDay && (idx === 0 || (idx > 0 && weeks[idx-1].find(d => d && d.getDate() <= 7)?.getMonth() !== firstDay.getMonth()));
+              return (
+                <div key={idx} style={{ width: "11px", position: "relative" }}>
+                  {showLabel && (
+                    <span style={{ position: "absolute", top: 0, left: 0, fontSize: "9px", color: "#9ca3af", whiteSpace: "nowrap" }}>
+                      {MESES_CORTOS[firstDay.getMonth()]}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          
+          {/* Grid de semanas y días */}
+          <div className="flex gap-1">
+            {/* Etiquetas de días a la izquierda */}
+            <div className="flex flex-col gap-[3px] mr-1 text-[8px] text-gray-400 justify-around">
+              <span style={{ height: "11px", lineHeight: "11px" }}>Lun</span>
+              <span style={{ height: "11px", lineHeight: "11px" }}></span>
+              <span style={{ height: "11px", lineHeight: "11px" }}>Mié</span>
+              <span style={{ height: "11px", lineHeight: "11px" }}></span>
+              <span style={{ height: "11px", lineHeight: "11px" }}>Vie</span>
+              <span style={{ height: "11px", lineHeight: "11px" }}></span>
+              <span style={{ height: "11px", lineHeight: "11px" }}></span>
+            </div>
+            
+            {/* Cuadrículas */}
+            <div className="flex gap-[3px]">
+              {weeks.map((week, wIdx) => (
+                <div key={wIdx} className="flex flex-col gap-[3px]">
+                  {week.map((day, dIdx) => {
+                    if (!day) return <div key={dIdx} style={{ width: "11px", height: "11px" }} />;
+                    const iso = formatFechaISO(day);
                     const count = stats.heatmapData[iso] || 0;
                     return (
                       <div
-                        key={iso}
-                        className="w-3 h-3 rounded-sm"
-                        style={{ backgroundColor: getHeatColor(count) }}
+                        key={dIdx}
                         title={`${iso}: ${count} asignación(es)`}
+                        style={{
+                          width: "11px",
+                          height: "11px",
+                          borderRadius: "2px",
+                          backgroundColor: getHeatColor(count),
+                        }}
                       />
                     );
                   })}
                 </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-2 mt-3 text-[9px] text-gray-500">
-          <span>Menos</span>
-          <div className="w-3 h-3 rounded-sm bg-gray-100"></div>
-          <div className="w-3 h-3 rounded-sm bg-red-200"></div>
-          <div className="w-3 h-3 rounded-sm bg-red-300"></div>
-          <div className="w-3 h-3 rounded-sm bg-red-400"></div>
-          <div className="w-3 h-3 rounded-sm bg-red-700"></div>
-          <span>Más</span>
+              ))}
+            </div>
+          </div>
+          
+          {/* Leyenda */}
+          <div className="flex items-center gap-1 mt-2 text-[8px] text-gray-500 justify-end">
+            <span>Menos</span>
+            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#ebedf0" }}></div>
+            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#ffcdd2" }}></div>
+            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#ff8a80" }}></div>
+            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#e53935" }}></div>
+            <div style={{ width: "11px", height: "11px", borderRadius: "2px", backgroundColor: "#b3261e" }}></div>
+            <span>Más</span>
+          </div>
         </div>
       </div>
 
-      {/* Top 10 OTs */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">Top 10 OTs Más Asignadas</h3>
-        {stats.statsPorOt.length === 0 ? (
-          <p className="text-xs text-gray-400">Sin datos.</p>
-        ) : (
-          <div className="space-y-2">
-            {stats.statsPorOt.map((item, i) => {
-              const ot = ots.find((o) => o.codigo === item.codigo);
-              const maxCount = stats.statsPorOt[0].count || 1;
-              const pct = Math.round((item.count / maxCount) * 100);
-              return (
-                <div key={item.codigo} className="flex items-center gap-2">
-                  <div className="w-6 text-xs font-bold text-gray-400">{i + 1}</div>
-                  <div className="w-24 text-xs font-semibold text-gray-900">{item.codigo}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[11px] text-gray-600 truncate">{ot ? ot.cliente : "—"}</div>
-                    <div className="h-2 bg-gray-100 rounded overflow-hidden mt-0.5">
-                      <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">Top 10 OTs Más Asignadas</h3>
+          {stats.statsPorOt.length === 0 ? (
+            <p className="text-xs text-gray-400">Sin datos.</p>
+          ) : (
+            <div className="space-y-2">
+              {stats.statsPorOt.map((item, i) => {
+                const ot = ots.find((o) => o.codigo === item.codigo);
+                const maxCount = stats.statsPorOt[0].count || 1;
+                const pct = Math.round((item.count / maxCount) * 100);
+                return (
+                  <div key={item.codigo} className="flex items-center gap-2">
+                    <div className="w-6 text-xs font-bold text-gray-400">{i + 1}</div>
+                    <div className="w-24 text-xs font-semibold text-gray-900">{item.codigo}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-gray-600 truncate">{ot ? ot.cliente : "—"}</div>
+                      <div className="h-2 bg-gray-100 rounded overflow-hidden mt-0.5">
+                        <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
+                      </div>
                     </div>
+                    <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
                   </div>
-                  <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Estadísticas detalladas con tabs */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h3 className="text-sm font-bold text-gray-700">Estadísticas Detalladas</h3>
-          <div className="flex gap-1 text-[10px]">
-            <button onClick={() => setVistaSecundaria("porTecnico")} className={`px-2 py-1 rounded font-medium ${vistaSecundaria === "porTecnico" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"}`}>Por técnico</button>
-            <button onClick={() => setVistaSecundaria("porActividad")} className={`px-2 py-1 rounded font-medium ${vistaSecundaria === "porActividad" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"}`}>Por actividad</button>
-            <button onClick={() => setVistaSecundaria("porDia")} className={`px-2 py-1 rounded font-medium ${vistaSecundaria === "porDia" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"}`}>Por día</button>
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-      {vistaSecundaria === "porTecnico" && (
-          <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2">
-            {stats.statsPorTecnicoLista.map((item, i) => {
-              const maxCount = stats.statsPorTecnicoLista[0].count || 1;
-              const pct = Math.round((item.count / maxCount) * 100);
-              return (
-                <div key={item.tecnico.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
-                  <div className="w-5 text-[10px] font-bold text-gray-400">{i + 1}</div>
-                  {/* Foto del técnico */}
-                  <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100 flex items-center justify-center shrink-0">
-                    {item.tecnico.foto_url ? (
-                      <img 
-                        src={item.tecnico.foto_url} 
-                        alt={item.tecnico.nombre}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <span className="text-[10px] font-bold text-gray-500">
-                        {item.tecnico.nombre.substring(0, 2).toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-gray-900 truncate">{item.tecnico.nombre}</div>
-                    <div className="text-[10px] text-gray-500 mb-1">{item.tecnico.cargo}</div>
-                    <div className="h-2 bg-gray-100 rounded overflow-hidden">
-                      <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                  <div className="text-sm font-bold text-gray-900 w-10 text-right">{item.count}</div>
-                </div>
-              );
-            })}
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="text-sm font-bold text-gray-700">Estadísticas Detalladas</h3>
+            <div className="flex gap-1 text-[10px]">
+              <button onClick={() => setVistaSecundaria("porTecnico")} className={`px-2 py-1 rounded font-medium ${vistaSecundaria === "porTecnico" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"}`}>Técnico</button>
+              <button onClick={() => setVistaSecundaria("porActividad")} className={`px-2 py-1 rounded font-medium ${vistaSecundaria === "porActividad" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"}`}>Actividad</button>
+              <button onClick={() => setVistaSecundaria("porDia")} className={`px-2 py-1 rounded font-medium ${vistaSecundaria === "porDia" ? "bg-[#E91E63] text-white" : "bg-gray-100 text-gray-600"}`}>Día</button>
+            </div>
           </div>
-        )}
 
-        {vistaSecundaria === "porActividad" && (
-          <div className="space-y-1.5 max-h-96 overflow-y-auto">
-            {stats.statsPorActividad.map((item, i) => {
-              const act = actividades.find((a) => a.nombre === item.nombre);
-              const hex = act ? COLOR_HEX[act.color] : COLOR_HEX.verde;
-              const maxCount = stats.statsPorActividad[0].count || 1;
-              const pct = Math.round((item.count / maxCount) * 100);
-              return (
-                <div key={item.nombre} className="flex items-center gap-2">
-                  <div className="w-5 text-[10px] font-bold text-gray-400">{i + 1}</div>
-                  <div className="w-32 text-[11px] font-semibold truncate" style={{ color: hex.text }}>{item.nombre}</div>
-                  <div className="flex-1">
-                    <div className="h-2 bg-gray-100 rounded overflow-hidden">
-                      <div className="h-full" style={{ width: `${pct}%`, backgroundColor: hex.border }} />
+          {vistaSecundaria === "porTecnico" && (
+            <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2">
+              {stats.statsPorTecnicoLista.map((item, i) => {
+                const maxCount = stats.statsPorTecnicoLista[0].count || 1;
+                const pct = Math.round((item.count / maxCount) * 100);
+                return (
+                  <div key={item.tecnico.id} className="flex items-center gap-2 p-1 hover:bg-gray-50 rounded-lg">
+                    <div className="w-5 text-[10px] font-bold text-gray-400">{i + 1}</div>
+                    <div className="w-8 h-8 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100 flex items-center justify-center shrink-0">
+                      {item.tecnico.foto_url ? (
+                        <img src={item.tecnico.foto_url} alt={item.tecnico.nombre} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <span className="text-[8px] font-bold text-gray-500">{item.tecnico.nombre.substring(0, 2).toUpperCase()}</span>
+                      )}
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-gray-900 truncate">{item.tecnico.nombre}</div>
+                      <div className="h-2 bg-gray-100 rounded overflow-hidden mt-0.5">
+                        <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                    <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
                   </div>
-                  <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
 
-        {vistaSecundaria === "porDia" && (
-          <div className="space-y-1 max-h-96 overflow-y-auto">
-            {stats.statsPorDia.map((item) => {
-              const maxCount = stats.statsPorDia.length > 0 ? Math.max(...stats.statsPorDia.map((d) => d.count)) : 1;
-              const pct = Math.round((item.count / maxCount) * 100);
-              const [y, m, d] = item.fecha.split("-");
-              return (
-                <div key={item.fecha} className="flex items-center gap-2">
-                  <div className="w-24 text-[10px] font-mono text-gray-600">{d}/{m}/{y}</div>
-                  <div className="flex-1">
-                    <div className="h-2 bg-gray-100 rounded overflow-hidden">
-                      <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
+          {vistaSecundaria === "porActividad" && (
+            <div className="space-y-1.5 max-h-[250px] overflow-y-auto">
+              {stats.statsPorActividad.map((item, i) => {
+                const act = actividades.find((a) => a.nombre === item.nombre);
+                const hex = act ? COLOR_HEX[act.color] : COLOR_HEX.verde;
+                const maxCount = stats.statsPorActividad[0].count || 1;
+                const pct = Math.round((item.count / maxCount) * 100);
+                return (
+                  <div key={item.nombre} className="flex items-center gap-2">
+                    <div className="w-5 text-[10px] font-bold text-gray-400">{i + 1}</div>
+                    <div className="w-28 text-[11px] font-semibold truncate" style={{ color: hex.text }}>{item.nombre}</div>
+                    <div className="flex-1">
+                      <div className="h-2 bg-gray-100 rounded overflow-hidden">
+                        <div className="h-full" style={{ width: `${pct}%`, backgroundColor: hex.border }} />
+                      </div>
                     </div>
+                    <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
                   </div>
-                  <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
+
+          {vistaSecundaria === "porDia" && (
+            <div className="space-y-1 max-h-[250px] overflow-y-auto">
+              {stats.statsPorDia.map((item) => {
+                const maxCount = stats.statsPorDia.length > 0 ? Math.max(...stats.statsPorDia.map((d) => d.count)) : 1;
+                const pct = Math.round((item.count / maxCount) * 100);
+                const [y, m, d] = item.fecha.split("-");
+                return (
+                  <div key={item.fecha} className="flex items-center gap-2">
+                    <div className="w-20 text-[10px] font-mono text-gray-600">{d}/{m}/{y}</div>
+                    <div className="flex-1">
+                      <div className="h-2 bg-gray-100 rounded overflow-hidden">
+                        <div className="h-full bg-[#E91E63]" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                    <div className="text-xs font-bold text-gray-900 w-8 text-right">{item.count}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
