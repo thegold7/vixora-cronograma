@@ -2,13 +2,13 @@
 
 import { useStore } from "@/lib/store";
 import { VIXORA_COLORS } from "@/lib/types";
-import { Calendar, Users, BarChart3, Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil, Download, MapPin } from "lucide-react";
+import { Calendar, Users, BarChart3, Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil, Download, MapPin, Settings } from "lucide-react";
 import { useState } from "react";
 import { ModalExportar } from "@/components/vixora/ModalExportar";
 
 interface Props {
-  onNavigate: (seccion: "cronograma" | "tecnicos" | "estadisticas" | "mapa") => void;
-  seccionActual: "cronograma" | "tecnicos" | "estadisticas" | "mapa";
+  onNavigate: (seccion: "cronograma" | "tecnicos" | "estadisticas" | "mapa" | "admin") => void;
+  seccionActual: "cronograma" | "tecnicos" | "estadisticas" | "mapa" | "admin";
 }
 
 export function SidebarLeft({ onNavigate, seccionActual }: Props) {
@@ -28,12 +28,17 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
           <div className="px-2 py-1 rounded font-bold text-sm flex items-center" style={{ backgroundColor: VIXORA_COLORS.primary }}>VIX</div>
           <span className="hidden lg:block text-xs text-white/70">Cronograma</span>
         </div>
+        
         <nav className="flex-1 p-2 space-y-1">
           <SidebarButton icon={<Calendar size={18} />} label="Cronograma" active={seccionActual === "cronograma"} onClick={() => onNavigate("cronograma")} />
           <SidebarButton icon={<Users size={18} />} label="Técnicos" active={seccionActual === "tecnicos"} onClick={() => onNavigate("tecnicos")} />
           <SidebarButton icon={<BarChart3 size={18} />} label="Dashboard" active={seccionActual === "estadisticas"} onClick={() => onNavigate("estadisticas")} />
           <SidebarButton icon={<MapPin size={18} />} label="Mapa Minas" active={seccionActual === "mapa"} onClick={() => onNavigate("mapa")} />
+          {modoAcceso === "editor" && (
+            <SidebarButton icon={<Settings size={18} />} label="Administración" active={seccionActual === "admin"} onClick={() => onNavigate("admin")} />
+          )}
         </nav>
+
         {seccionActual === "cronograma" && (
           <div className="p-2 space-y-1 border-t border-white/10">
             <SidebarButton icon={mostrarDetalles ? <Eye size={18} /> : <EyeOff size={18} />} label={mostrarDetalles ? "Ocultar detalles" : "Mostrar detalles"} active={false} onClick={toggleMostrarDetalles} />
@@ -43,6 +48,7 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
             )}
           </div>
         )}
+
         <div className="p-2 border-t border-white/10">
           {modoAcceso === "editor" ? (
             <>
