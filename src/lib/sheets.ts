@@ -13,6 +13,7 @@ import type {
   OT,
   Actividad,
   EntradaCronograma,
+  Sede,
 } from "./types";
 
 let client: sheets_v4.Sheets | null = null;
@@ -92,6 +93,7 @@ export async function getOTs(): Promise<OT[]> {
     sede: r[2] ?? "",
     estado: r[3] ?? "",
     activo: (r[4] ?? "TRUE").toUpperCase() === "TRUE",
+    visible_mapa: (r[5] ?? "TRUE").toUpperCase() === "TRUE",
   }));
 }
 
@@ -456,6 +458,121 @@ export async function regenerarCronogramaVisual(
     range: "Cronograma_Visual!A1:ZZ",
   });
 
+// ============================================================
+// LECTURA/ESCRITURA — SEDES (para mapa dinámico)
+// ============================================================
+
+export async function getSedes(): Promise<Sede[]> {
+  try {
+    const sheets = getClient();
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: getSheetId(),
+      range: "Sedes!A2:G",
+    });
+    const rows = (res.data.values ?? []) as string[][];
+    return rows
+      .filter((r) => r.length > 0 && r.some((c) => c && c.trim() !== ""))
+      .map((r) => ({
+        nombre: r[0] ?? "",
+        lat: parseFloat(r[1]) || 0,
+        lng: parseFloat(r[2]) || 0,
+        region: r[3] ?? "",
+        ciudad: r[4] ?? "",
+        datoCurioso: r[5] ?? "",
+        foto_ciudad: r[6] ?? "",
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export async function addSede(sede: {
+  nombre: string;
+  lat: number;
+  lng: number;
+  region: string;
+  ciudad: string;
+  datoCurioso: string;
+  foto_ciudad: string;
+}): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getSedes();
+  if (all.some((s) => s.nombre.toUpperCase() === sede.nombre.toUpperCase())) {
+    throw new Error(`Ya existe una sede con nombre ${sede.nombre}`);
+  }
+  const values = [[sede.nombre, sede.lat, sede.lng, sede.region, sede.ciudad, sede.datoCurioso, sede.foto_ciudad]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: "Sedes!A:G",
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+  return { ok: true };
+}
+
+export async function deleteSede(nombre: string): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getSedes();
+  const filtered = all.filter((s) => s.nombre.toUpperCase() !== nombre.toUpperCase());
+  
+  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad"]];
+  const rows = filtered.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: getSheetId(),
+    range: "Sedes!A1:Z",
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: "Sedes!A1",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [...header, ...rows] },
+  });
+
+  return { ok: true };
+}
+
+export async function deleteOt(codigo: string): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getOTs();
+  const filtered = all.filter((o) => o.codigo !== codigo);
+  
+  const header = [["codigo", "cliente", "sede", "estado", "activo", "visible_mapa"]];
+  const rows = filtered.map((o) => [o.codigo, o.cliente, o.sede, o.estado, o.activo ? "TRUE" : "FALSE", o.visible_mapa ? "TRUE" : "FALSE"]);
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: getSheetId(),
+    range: "OTs!A1:Z",
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: "OTs!A1",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [...header, ...rows] },
+  });
+
+  return { ok: true };
+}
+
+export async function updateOtVisible(codigo: string, visible: boolean): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getOTs();
+  const idx = all.findIndex((o) => o.codigo === codigo);
+  if (idx < 0) throw new Error(`OT ${codigo} no encontrada`);
+  const rowNumber = idx + 2;
+  const value = visible ? "TRUE" : "FALSE";
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `OTs!F${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[value]] },
+  });
+  return { ok: true };
+}
+  
   const lastCol = colToLetter(totalColumnas);
 
   await sheets.spreadsheets.values.update({
