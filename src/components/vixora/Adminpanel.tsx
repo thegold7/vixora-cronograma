@@ -9,12 +9,10 @@ export function AdminPanel() {
   const [sedes, setSedes] = useState<any[]>([]);
   const [cargandoSedes, setCargandoSedes] = useState(true);
 
-  // Formularios
   const [nuevaSede, setNuevaSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   const [nuevaOt, setNuevaOt] = useState({ codigo: "", cliente: "", sede: "", estado: "EN PROCESO", visible_mapa: true });
   const [tabActivo, setTabActivo] = useState<"ots" | "sedes">("ots");
 
-  // Cargar sedes desde la API
   const fetchSedes = async () => {
     setCargandoSedes(true);
     try {
@@ -32,7 +30,6 @@ export function AdminPanel() {
     fetchSedes();
   }, []);
 
-  // === Handlers OTs ===
   const handleAddOt = async () => {
     if (!nuevaOt.codigo || !nuevaOt.cliente) {
       showToast("Código y cliente son obligatorios", "error");
@@ -53,7 +50,6 @@ export function AdminPanel() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       
-      // Si se marcó como visible, asegurarse de que tenga visible_mapa=TRUE
       if (!nuevaOt.visible_mapa) {
         await fetch("/api/sedes", {
           method: "POST",
@@ -103,7 +99,6 @@ export function AdminPanel() {
     }
   };
 
-  // === Handlers Sedes ===
   const handleAddSede = async () => {
     if (!nuevaSede.nombre || !nuevaSede.lat || !nuevaSede.lng) {
       showToast("Nombre, latitud y longitud son obligatorios", "error");
@@ -157,7 +152,6 @@ export function AdminPanel() {
         </button>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-2 mb-6 border-b border-gray-200">
         <button
           onClick={() => setTabActivo("ots")}
@@ -177,10 +171,8 @@ export function AdminPanel() {
         </button>
       </div>
 
-      {/* Contenido Tab OTs */}
       {tabActivo === "ots" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Formulario nueva OT */}
           <div className="bg-white border border-gray-200 rounded-lg p-4 h-fit">
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <Plus size={16} className="text-[#E91E63]" /> Nueva OT
@@ -204,7 +196,6 @@ export function AdminPanel() {
             </div>
           </div>
 
-          {/* Lista de OTs */}
           <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3">OTs Existentes ({ots.length})</h3>
             <div className="space-y-1 max-h-[600px] overflow-y-auto">
@@ -237,10 +228,8 @@ export function AdminPanel() {
         </div>
       )}
 
-      {/* Contenido Tab Sedes */}
       {tabActivo === "sedes" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Formulario nueva Sede */}
           <div className="bg-white border border-gray-200 rounded-lg p-4 h-fit">
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <Plus size={16} className="text-[#E91E63]" /> Nueva Sede/Ciudad
@@ -261,7 +250,6 @@ export function AdminPanel() {
             </div>
           </div>
 
-          {/* Lista de Sedes */}
           <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Sedes Existentes ({sedes.length})</h3>
             {cargandoSedes ? (
