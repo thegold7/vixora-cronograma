@@ -359,15 +359,26 @@ export function MapaMinas() {
               </div>
             </div>
 
-            {/* Columna 2: Dato curioso con imagen real */}
+          {/* Columna 2: Dato curioso con imagen real */}
             <div className="w-56 shrink-0 flex flex-col bg-white">
-              <div className="px-3 py-2 border-b border-gray-200 flex items-center gap-2 bg-gray-50">
-                <Info size={12} className="text-[#E91E63]" />
-                <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
+              <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+                <div className="flex items-center gap-2">
+                  <Info size={12} className="text-[#E91E63]" />
+                  <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
+                </div>
+                {/* Botón para recargar imagen */}
+                <button 
+                  onClick={() => setImgKey(prev => prev + 1)} 
+                  className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200"
+                  title="Recargar imagen"
+                >
+                  <RefreshCw size={10} />
+                </button>
               </div>
               <div className="h-28 relative overflow-hidden bg-gray-100">
                 <img 
-                  src={selectedMina.coord.foto_ciudad} 
+                  key={`${selectedMina.coord.ciudad}-${imgKey}`}
+                  src={`${selectedMina.coord.foto_ciudad}?t=${imgKey}`} 
                   alt={selectedMina.coord.ciudad}
                   className="w-full h-full object-cover"
                   onError={(e) => {
