@@ -21,8 +21,19 @@ export interface OT {
   sede: string;
   estado: string;
   activo: boolean;
+  visible_mapa?: boolean;
 }
 
+// NUEVO: interfaz para Sedes
+export interface Sede {
+  nombre: string;
+  lat: number;
+  lng: number;
+  region: string;
+  ciudad: string;
+  datoCurioso: string;
+  foto_ciudad: string;
+}
 export interface Actividad {
   codigo: string;
   nombre: string;
