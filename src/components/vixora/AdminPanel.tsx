@@ -2,12 +2,13 @@
 
 import { useStore } from "@/lib/store";
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X } from "lucide-react";
+import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X, Database } from "lucide-react";
+import { MINAS_PERU } from "@/lib/minasData"; // Importar las sedes predefinidas
 
 export function AdminPanel() {
   const { cargarDatosSilencioso, showToast } = useStore();
   const [allOts, setAllOts] = useState<any[]>([]);
-  const [sedes, setSedes] = useState<any[]>([]);
+  const [dynamicSedes, setDynamicSedes] = useState<any[]>([]);
   const [cargando, setCargando] = useState(true);
 
   const [editandoOt, setEditandoOt] = useState<string | null>(null);
@@ -15,6 +16,9 @@ export function AdminPanel() {
   
   const [nuevaSede, setNuevaSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   const [tabActivo, setTabActivo] = useState<"ots" | "sedes">("ots");
+
+  // Combinar sedes predefinidas (MINAS_PERU) con las dinámicas del Sheet
+  const allSedes = [...MINAS_PERU.map(s => ({ ...s, esPredefinida: true })), ...dynamicSedes.map(s => ({ ...s, esPredefinida: false }))];
 
   const fetchAllData = async () => {
     setCargando(true);
@@ -26,7 +30,7 @@ export function AdminPanel() {
       const jsonOts = await resOts.json();
       const jsonSedes = await resSedes.json();
       if (jsonOts.ok) setAllOts(jsonOts.data);
-      if (jsonSedes.ok) setSedes(jsonSedes.data);
+      if (jsonSedes.ok) setDynamicSedes(jsonSedes.data);
     } catch (err) {
       console.error("Error:", err);
     } finally {
@@ -212,7 +216,7 @@ export function AdminPanel() {
           <Briefcase size={16} /> OTs ({allOts.length})
         </button>
         <button onClick={() => setTabActivo("sedes")} className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 ${tabActivo === "sedes" ? "border-[#E91E63] text-[#E91E63]" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
-          <Building2 size={16} /> Sedes ({sedes.length})
+          <Building2 size={16} /> Sedes ({allSedes.length})
         </button>
       </div>
 
@@ -229,7 +233,7 @@ export function AdminPanel() {
               
               <select value={formData.sede} onChange={(e) => setFormData({...formData, sede: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded bg-white">
                 <option value="">Seleccionar Sede...</option>
-                {sedes.map((s) => (
+                {allSedes.map((s) => (
                   <option key={s.nombre} value={s.nombre}>{s.nombre} ({s.ciudad})</option>
                 ))}
               </select>
@@ -314,19 +318,28 @@ export function AdminPanel() {
           </div>
 
           <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-4">
-            <h3 className="text-sm font-bold text-gray-700 mb-3">Sedes Existentes ({sedes.length})</h3>
+            <h3 className="text-sm font-bold text-gray-700 mb-3">Sedes Existentes ({allSedes.length})</h3>
             {cargando ? <p className="text-xs text-gray-400">Cargando...</p> : (
               <div className="space-y-1 max-h-[600px] overflow-y-auto">
-                {sedes.map((sede) => (
+                {allSedes.map((sede) => (
                   <div key={sede.nombre} className="flex items-center gap-2 p-2 border border-gray-100 rounded hover:bg-gray-50">
                     <MapPin size={16} className="text-[#E91E63] shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-gray-900">{sede.nombre}</div>
+                      <div className="text-xs font-bold text-gray-900 flex items-center gap-2">
+                        {sede.nombre}
+                        {sede.esPredefinida && (
+                          <span className="flex items-center gap-1 text-[8px] bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full">
+                            <Database size={8} /> Predefinida
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-gray-600 truncate">{sede.ciudad} · {sede.region} ({sede.lat}, {sede.lng})</div>
                     </div>
-                    <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1.5 rounded text-red-600 bg-red-50 hover:bg-red-100 shrink-0" title="Eliminar Sede">
-                      <Trash2 size={14} />
-                    </button>
+                    {!sede.esPredefinida && (
+                      <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1.5 rounded text-red-600 bg-red-50 hover:bg-red-100 shrink-0" title="Eliminar Sede">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
