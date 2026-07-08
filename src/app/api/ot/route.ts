@@ -1,16 +1,31 @@
 /**
+ * GET /api/ot
+ * Devuelve TODAS las OTs (incluyendo inactivas) para el panel de administración.
+ *
  * POST /api/ot
- * Maneja 2 acciones:
+ * Maneja 3 acciones:
  *   - { accion: "cambiar_estado", codigo, nuevoEstado }
  *   - { accion: "agregar", codigo, cliente, sede, estado }
- *
- * Solo accesible en modo editor.
+ *   - { accion: "actualizar", codigoOriginal, nuevoCodigo, cliente, sede, estado }
  */
 import { NextRequest, NextResponse } from "next/server";
-import { updateOtEstado, addOt } from "@/lib/sheets";
+import { getOTs, updateOtEstado, addOt, updateOt } from "@/lib/sheets";
 import { isEditor } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
+
+export async function GET() {
+  try {
+    const ots = await getOTs();
+    return NextResponse.json({ ok: true, data: ots });
+  } catch (err) {
+    console.error("[/api/ot GET] error:", err);
+    return NextResponse.json(
+      { ok: false, error: err instanceof Error ? err.message : "Unknown error" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(req: NextRequest) {
   if (!(await isEditor())) {
@@ -47,12 +62,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    if (accion === "actualizar") {
+      const { codigoOriginal, nuevoCodigo, cliente, sede, estado } = body;
+      if (!codigoOriginal || !nuevoCodigo || !cliente || !estado) {
+        return NextResponse.json(
+          { ok: false, error: "Faltan campos: codigoOriginal, nuevoCodigo, cliente, estado" },
+          { status: 400 }
+        );
+      }
+      await updateOt(codigoOriginal, nuevoCodigo, cliente, sede || "", estado);
+      return NextResponse.json({ ok: true });
+    }
+
     return NextResponse.json(
-      { ok: false, error: "Acción no reconocida. Usa: cambiar_estado o agregar" },
+      { ok: false, error: "Acción no reconocida. Usa: cambiar_estado, agregar o actualizar" },
       { status: 400 }
     );
   } catch (err) {
-    console.error("[/api/ot] error:", err);
+    console.error("[/api/ot POST] error:", err);
     return NextResponse.json(
       { ok: false, error: err instanceof Error ? err.message : "Unknown error" },
       { status: 500 }
