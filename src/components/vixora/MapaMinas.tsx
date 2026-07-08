@@ -34,9 +34,9 @@ export function MapaMinas() {
   const [actualizando, setActualizando] = useState(false);
   
   const hoy = new Date();
-  const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
-  const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
-
+  const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), 0, 1)));
+  const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), 11, 31)));
+  
   const handleActualizar = async () => {
     setActualizando(true);
     await cargarDatos();
