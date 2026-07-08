@@ -65,10 +65,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     abrirModalEdicion,
     seleccionRango,
     setSeleccionRango,
-    // NUEVO: filtros
-    busquedaTecnico,
-    filtroCargo,
-    filtroActividad,
   } = useStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragHover, setDragHover] = useState<string | null>(null);
@@ -90,28 +86,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
 
   const otMap: Record<string, OT> = {};
   for (const o of ots) otMap[o.codigo] = o;
-
-  // NUEVO: verificar si un técnico pasa los filtros
-  const tecnicoPasaFiltros = (t: Tecnico): boolean => {
-    // Filtro por cargo
-    if (filtroCargo && t.cargo !== filtroCargo) return false;
-    // Filtro por nombre
-    if (busquedaTecnico) {
-      const q = busquedaTecnico.toLowerCase();
-      if (!t.nombre.toLowerCase().includes(q)) return false;
-    }
-    return true;
-  };
-
-  // NUEVO: verificar si una celda pasa el filtro de actividad
-  const celdaPasaFiltroActividad = (entrada: EntradaCronograma | undefined): boolean => {
-    if (!filtroActividad) return true; // sin filtro → pasa
-    if (!entrada) return false; // con filtro y sin entrada → no pasa
-    return entrada.actividad === filtroActividad;
-  };
-
-  // NUEVO: hay filtros activos
-  const hayFiltros = busquedaTecnico || filtroCargo || filtroActividad;
 
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {
@@ -159,7 +133,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     };
   }, [modoAcceso, abrirModalEdicion]);
 
-    const handleCellClick = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
+  // FIX: Un solo clic selecciona la celda. Doble clic abre el modal.
+  const handleCellClick = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
     if (modoAcceso !== "editor") return;
     if (isDragging) {
       setIsDragging(false);
@@ -172,7 +147,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       setSeleccionRango({ inicio, fin, tecnico_id: tid });
       return;
     }
-    abrirModalEdicion(tecnico_id, fecha);
+    // Single click selects the cell (allows Ctrl+C to work immediately)
+    setSeleccionRango({ inicio: fecha, fin: fecha, tecnico_id });
   };
 
   const handleCellMouseDown = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
@@ -295,7 +271,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     );
   };
 
-  // Estilos base
   const tableStyle: React.CSSProperties = {
     tableLayout: "fixed",
     borderCollapse: "collapse",
@@ -335,13 +310,11 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     boxSizing: "border-box",
   };
 
-  // NUEVO: estilo del técnico con atenuación si no pasa filtros
   const getTecnicoCellStyle = (t: Tecnico): React.CSSProperties => ({
     position: "sticky",
     left: 0,
     zIndex: 2,
-    backgroundColor: tecnicoPasaFiltros(t) ? "#ffffff" : "#f3f4f6",
-    opacity: tecnicoPasaFiltros(t) ? 1 : 0.4,
+    backgroundColor: "#ffffff",
     width: anchoColFija,
     minWidth: anchoColFija,
     maxWidth: anchoColFija,
@@ -349,10 +322,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     borderRight: "1px solid #e5e7eb",
     borderBottom: "1px solid #e5e7eb",
     boxSizing: "border-box",
-    transition: "opacity 0.2s",
   });
 
-  // NUEVO: estilo de celda con atenuación si no pasa filtro de actividad
   const getCellBg = (
     entrada: EntradaCronograma | undefined,
     isWeekend: boolean,
@@ -361,11 +332,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     isDragHover: boolean,
     tecnico: Tecnico
   ) => {
-    // Si el técnico no pasa filtros, atenuar todo
-    if (!tecnicoPasaFiltros(tecnico)) return "#f3f4f6";
-    // Si hay filtro de actividad y la celda no coincide, atenuar
-    if (filtroActividad && !celdaPasaFiltroActividad(entrada)) return "#f3f4f6";
-    
     if (inRango || isDragHover) return "#fce4ec";
     if (inDragRange) return "#f8bbd0";
     if (entrada) {
@@ -376,10 +342,25 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     return "#ffffff";
   };
 
-  // NUEVO: opacidad de la celda según filtros
   const getCellOpacity = (entrada: EntradaCronograma | undefined, tecnico: Tecnico): number => {
+    const tecnicoPasaFiltros = (t: Tecnico) => {
+      const { filtroCargo, busquedaTecnico, filtroActividad } = useStore.getState();
+      if (filtroCargo && t.cargo !== filtroCargo) return false;
+      if (busquedaTecnico) {
+        const q = busquedaTecnico.toLowerCase();
+        if (!t.nombre.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    };
+    const celdaPasaFiltroActividad = (entrada: EntradaCronograma | undefined) => {
+      const { filtroActividad } = useStore.getState();
+      if (!filtroActividad) return true;
+      if (!entrada) return false;
+      return entrada.actividad === filtroActividad;
+    };
+
     if (!tecnicoPasaFiltros(tecnico)) return 0.4;
-    if (filtroActividad && !celdaPasaFiltroActividad(entrada)) return 0.4;
+    if (useStore.getState().filtroActividad && !celdaPasaFiltroActividad(entrada)) return 0.4;
     return 1;
   };
 
@@ -396,7 +377,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       }}
     >
       <table style={tableStyle}>
-        {/* Header */}
         {vista === "año" ? (
           <>
             <thead>
@@ -492,7 +472,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
           </thead>
         )}
 
-        {/* Body */}
         <tbody>
           {tecnicosVisibles.length === 0 ? (
             <tr>
@@ -503,7 +482,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
           ) : (
             tecnicosVisibles.map((t, idx) => (
               <tr key={t.id} className="hover:bg-gray-50">
-                {/* Celda fija del técnico */}
                 <td style={getTecnicoCellStyle(t)}>
                   <div className="flex items-center gap-2">
                     <div className="relative shrink-0">
@@ -533,7 +511,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                     </div>
                   </div>
                 </td>
-                {/* Celdas de días */}
                 {dias.map((d) => {
                   const iso = formatFechaISO(d);
                   const key = `${t.id}|${iso}`;
@@ -573,11 +550,10 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                         cursor: modoAcceso === "editor" ? "pointer" : "default",
                         userSelect: "none",
                         opacity: cellOpacity,
-                        transition: "opacity 0.2s",
                       }}
                       title={
                         modoAcceso === "editor"
-                          ? `${iso} - ${DOW_ES[d.getDay()]} - Click: editar · Arrastra mouse: rango (solo esta fila)`
+                          ? `${iso} - ${DOW_ES[d.getDay()]} - Click: seleccionar · Doble Click: editar`
                           : `${iso} - ${DOW_ES[d.getDay()]}`
                       }
                     >
@@ -598,13 +574,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
           )}
         </tbody>
       </table>
-
-      {/* NUEVO: mensaje cuando no hay resultados con filtros */}
-      {hayFiltros && tecnicosVisibles.every((t) => !tecnicoPasaFiltros(t)) && (
-        <div className="p-8 text-center text-gray-500 text-sm">
-          No se encontraron técnicos que coincidan con los filtros.
-        </div>
-      )}
     </div>
   );
 }
