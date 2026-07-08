@@ -6,7 +6,7 @@ import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import { findMinaCoord, type MinaCoord } from "@/lib/minasData";
 import type { OT, Tecnico } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, MapPin, Check } from "lucide-react";
+import { Search, X, Calendar, Info, RefreshCw, Check } from "lucide-react";
 
 interface MinaAgrupada {
   coord: MinaCoord;
@@ -32,6 +32,9 @@ export function MapaMinas() {
   const [selectedMina, setSelectedMina] = useState<MinaAgrupada | null>(null);
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
+  
+  // FIX: Estado para forzar recarga de imagen
+  const [imgKey, setImgKey] = useState(0);
   
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
@@ -98,7 +101,6 @@ export function MapaMinas() {
     
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
-      
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
       
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
@@ -128,7 +130,6 @@ export function MapaMinas() {
         }
       }
     }
-    
     return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
@@ -359,14 +360,13 @@ export function MapaMinas() {
               </div>
             </div>
 
-          {/* Columna 2: Dato curioso con imagen real */}
+            {/* Columna 2: Dato curioso con imagen real */}
             <div className="w-56 shrink-0 flex flex-col bg-white">
               <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between bg-gray-50">
                 <div className="flex items-center gap-2">
                   <Info size={12} className="text-[#E91E63]" />
                   <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
                 </div>
-                {/* Botón para recargar imagen */}
                 <button 
                   onClick={() => setImgKey(prev => prev + 1)} 
                   className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200"
