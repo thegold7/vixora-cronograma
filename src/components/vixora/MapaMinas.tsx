@@ -17,26 +17,12 @@ interface MinaAgrupada {
   total: number;
 }
 
-interface TecnicoEnMina {
-  tecnico: Tecnico;
-  fecha: string;
-  actividad: string;
-  ots: string;
-}
-
+// Simplificado: 1 técnico = 1 fila con su fecha min y max
 interface TecnicoAgrupado {
   tecnico: Tecnico;
   fechaInicio: string;
   fechaFin: string;
-  actividad: string;
-  count: number;
-}
-
-// Helper para sumar días a una fecha ISO
-function sumarDiasISO(iso: string, dias: number): string {
-  const d = new Date(iso + "T00:00:00");
-  d.setDate(d.getDate() + dias);
-  return formatFechaISO(d);
+  actividades: Set<string>;
 }
 
 export function MapaMinas() {
@@ -55,7 +41,6 @@ export function MapaMinas() {
   const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
 
-  // FIX: Usar carga silenciosa para no destruir el mapa
   const handleActualizar = async () => {
     setActualizando(true);
     await cargarDatosSilencioso();
@@ -109,11 +94,14 @@ export function MapaMinas() {
     );
   }, [minasAgrupadas, query]);
 
-  // FIX: Agrupar técnicos por fechas consecutivas
+  // FIX: Agrupar por técnico (1 fila por técnico) mostrando fecha min y max
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
-    const asignaciones: TecnicoEnMina[] = [];
+    const tecnicosMap: Record<string, TecnicoAgrupado> = {};
+    
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+      
+      // Solo actividades de proyecto/servicio (inamovibles)
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
       
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
@@ -123,41 +111,30 @@ export function MapaMinas() {
         if (perteneceAMina) {
           const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
           if (tecnico && tecnico.activo) {
-            asignaciones.push({ tecnico, fecha: e.fecha, actividad: e.actividad, ots: e.ots_asignadas });
+            if (!tecnicosMap[tecnico.id]) {
+              tecnicosMap[tecnico.id] = {
+                tecnico,
+                fechaInicio: e.fecha,
+                fechaFin: e.fecha,
+                actividades: new Set([e.actividad]),
+              };
+            } else {
+              // Actualizar fechas min/max
+              if (e.fecha < tecnicosMap[tecnico.id].fechaInicio) {
+                tecnicosMap[tecnico.id].fechaInicio = e.fecha;
+              }
+              if (e.fecha > tecnicosMap[tecnico.id].fechaFin) {
+                tecnicosMap[tecnico.id].fechaFin = e.fecha;
+              }
+              tecnicosMap[tecnico.id].actividades.add(e.actividad);
+            }
           }
         }
       }
     }
     
-    // Ordenar por fecha
-    asignaciones.sort((a, b) => a.fecha.localeCompare(b.fecha));
-    
-    // Agrupar consecutivos
-    const grupos: TecnicoAgrupado[] = [];
-    for (const asig of asignaciones) {
-      const ultimo = grupos[grupos.length - 1];
-      const fechaAnterior = ultimo ? sumarDiasISO(ultimo.fechaFin, 1) : null;
-      
-      if (ultimo && 
-          ultimo.tecnico.id === asig.tecnico.id && 
-          ultimo.actividad === asig.actividad &&
-          fechaAnterior === asig.fecha) {
-        // Es consecutivo: extender el rango
-        ultimo.fechaFin = asig.fecha;
-        ultimo.count++;
-      } else {
-        // No es consecutivo o es otro técnico: nuevo grupo
-        grupos.push({
-          tecnico: asig.tecnico,
-          fechaInicio: asig.fecha,
-          fechaFin: asig.fecha,
-          actividad: asig.actividad,
-          count: 1,
-        });
-      }
-    }
-    
-    return grupos;
+    // Convertir a array y ordenar por fechaInicio
+    return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
   useEffect(() => {
@@ -214,7 +191,6 @@ export function MapaMinas() {
     return partes.length >= 2 ? (partes[0][0] + partes[1][0]).toUpperCase() : nombre.substring(0, 2).toUpperCase();
   };
 
-  // Formatear fechas para mostrar
   const fmtFecha = (iso: string) => {
     const [y, m, d] = iso.split("-");
     return `${d}/${m}`;
@@ -349,10 +325,15 @@ export function MapaMinas() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-semibold text-gray-900 truncate">{t.tecnico.nombre}</div>
-                              <div className="text-[10px] text-gray-500 truncate">{t.actividad}</div>
+                              <div className="text-[10px] text-gray-500 truncate">
+                                {Array.from(t.actividades).join(", ")}
+                              </div>
                             </div>
                             <div className="text-[10px] text-gray-600 shrink-0 font-medium">
-                              {t.count === 1 ? fmtFecha(t.fechaInicio) : `${fmtFecha(t.fechaInicio)} → ${fmtFecha(t.fechaFin)}`}
+                              {t.fechaInicio === t.fechaFin 
+                                ? fmtFecha(t.fechaInicio) 
+                                : `${fmtFecha(t.fechaInicio)} → ${fmtFecha(t.fechaFin)}`
+                              }
                             </div>
                           </div>
                         ))}
