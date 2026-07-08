@@ -298,7 +298,7 @@ export async function toggleTecnicoActivo(
 }
 
 // ============================================================
-// ESCRITURA — OTs (cambiar estado y agregar nuevas)
+// ESCRITURA — OTs (cambiar estado, agregar, actualizar, eliminar)
 // ============================================================
 export async function updateOtEstado(
   codigo: string,
@@ -317,6 +317,32 @@ export async function updateOtEstado(
     range: `OTs!D${rowNumber}:E${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[estadoUpper, activo]] },
+  });
+  return { ok: true };
+}
+
+export async function addOt(
+  codigo: string,
+  cliente: string,
+  sede: string,
+  estado: string
+): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const estadoUpper = estado.toUpperCase();
+  const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
+
+  const all = await getOTs();
+  if (all.some((o) => o.codigo === codigo)) {
+    throw new Error(`Ya existe una OT con código ${codigo}`);
+  }
+
+  const values = [[codigo, cliente, sede, estadoUpper, activo, "TRUE"]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: "OTs!A:F",
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
   });
   return { ok: true };
 }
@@ -350,9 +376,6 @@ export async function updateOt(
   return { ok: true };
 }
 
-// ============================================================
-// ESCRITURA — OTs (eliminar y toggle visible_mapa)
-// ============================================================
 export async function deleteOt(codigo: string): Promise<{ ok: true }> {
   const sheets = getClient();
   const all = await getOTs();
