@@ -84,7 +84,7 @@ export async function getTecnicosActivos(): Promise<Tecnico[]> {
 }
 
 // ============================================================
-// LECTURA — OTs
+// LECTURA — OTs (incluye visible_mapa)
 // ============================================================
 export async function getOTs(): Promise<OT[]> {
   return readSheet("OTs", (r) => ({
@@ -336,10 +336,10 @@ export async function addOt(
     throw new Error(`Ya existe una OT con código ${codigo}`);
   }
 
-  const values = [[codigo, cliente, sede, estadoUpper, activo]];
+  const values = [[codigo, cliente, sede, estadoUpper, activo, "TRUE"]];
   await sheets.spreadsheets.values.append({
     spreadsheetId: getSheetId(),
-    range: "OTs!A:E",
+    range: "OTs!A:F",
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: { values },
@@ -348,120 +348,50 @@ export async function addOt(
 }
 
 // ============================================================
-// REGENERAR CRONOGRAMA_VISUAL
-// Formato: UNA SOLA TABLA con 365 días
-//   Fila 1: "MES" | "Nombre" | "Cargo" | "ENERO 2026" | "" | ... | "FEBRERO 2026" | ...
-//   Fila 2: "N°" | "Nombre" | "Cargo" | "01/1 - Jueves" | "02/1 - Viernes" | ... (365 días)
-//   Filas 3-15: técnicos con sus asignaciones
+// ESCRITURA — OTs (eliminar y toggle visible_mapa)
 // ============================================================
-export async function regenerarCronogramaVisual(
-  year: number,
-  month?: number
-): Promise<{ ok: true; filas: number; columnas: number }> {
+export async function deleteOt(codigo: string): Promise<{ ok: true }> {
   const sheets = getClient();
-  const tecnicos = (await getTecnicos()).filter((t) => t.activo);
-  const ots = await getOTs();
-  const otMap: Record<string, OT> = {};
-  for (const o of ots) otMap[o.codigo] = o;
-
-  const entries = await getCronograma();
-  const map: Record<string, EntradaCronograma> = {};
-  for (const e of entries) map[`${e.tecnico_id}|${e.fecha}`] = e;
-
-  const mesesAGenerar: number[] = month ? [month] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-
-  // Días de la semana completos en español
-  const DOW_COMPLETO = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-  const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-
-  // Fila 1: nombre del mes (solo en el día 1 de cada mes)
-  const filaMes: string[] = ["MES", "Nombre", "Cargo"];
-  // Fila 2: días con formato "DD/M - DiaSemana" (ej: "01/1 - Jueves")
-  const filaDias: string[] = ["N°", "Nombre", "Cargo"];
-
-  for (const mes of mesesAGenerar) {
-    const last = new Date(year, mes, 0).getDate();
-    for (let d = 1; d <= last; d++) {
-      if (d === 1) {
-        filaMes.push(`${MESES_ES[mes - 1].toUpperCase()} ${year}`);
-      } else {
-        filaMes.push("");
-      }
-      const date = new Date(year, mes - 1, d);
-      // Formato: "01/1 - Jueves" (día/mes - día de la semana completo)
-      filaDias.push(`${String(d).padStart(2, "0")}/${mes} - ${DOW_COMPLETO[date.getDay()]}`);
-    }
-  }
-
-  const rows: string[][] = [filaMes, filaDias];
-
-  // Filas de técnicos (3 a 15)
-  for (let i = 0; i < tecnicos.length; i++) {
-    const t = tecnicos[i];
-    const row: string[] = [String(i + 1), t.nombre, t.cargo];
-
-    for (const mes of mesesAGenerar) {
-      const last = new Date(year, mes, 0).getDate();
-      for (let d = 1; d <= last; d++) {
-        const iso = `${year}-${String(mes).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-        const e = map[`${t.id}|${iso}`];
-        if (!e) {
-          row.push("");
-          continue;
-        }
-        let cellText = e.actividad;
-        if (e.ots_asignadas && e.ots_asignadas !== "—") {
-          const codigos = e.ots_asignadas
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-          for (const cod of codigos) {
-            const ot = otMap[cod];
-            let detalleOt = "";
-            if (e.detalle && e.detalle !== "—") {
-              const lineas = e.detalle.split("\n");
-              for (let li = 0; li < lineas.length; li++) {
-                const match = lineas[li].match(/^(\S+):$/);
-                if (match && match[1] === cod) {
-                  if (li + 1 < lineas.length) {
-                    detalleOt = lineas[li + 1];
-                  }
-                  break;
-                }
-              }
-            }
-            if (detalleOt) {
-              cellText += `\n${cod}:\n${detalleOt}`;
-            } else if (ot) {
-              const desc = `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim();
-              cellText += `\n${cod}:\n${desc}`;
-            } else {
-              cellText += `\n${cod}:`;
-            }
-          }
-        } else if (e.detalle && e.detalle !== "—") {
-          cellText += `\n${e.detalle}`;
-        }
-        row.push(cellText);
-      }
-    }
-    rows.push(row);
-  }
-
-  const totalColumnas = 3 + mesesAGenerar.reduce(
-    (sum, mes) => sum + new Date(year, mes, 0).getDate(),
-    0
-  );
+  const all = await getOTs();
+  const filtered = all.filter((o) => o.codigo !== codigo);
+  
+  const header = [["codigo", "cliente", "sede", "estado", "activo", "visible_mapa"]];
+  const rows = filtered.map((o) => [o.codigo, o.cliente, o.sede, o.estado, o.activo ? "TRUE" : "FALSE", o.visible_mapa ? "TRUE" : "FALSE"]);
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
-    range: "Cronograma_Visual!A1:ZZ",
+    range: "OTs!A1:Z",
   });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: "OTs!A1",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [...header, ...rows] },
+  });
+
+  return { ok: true };
+}
+
+export async function updateOtVisible(codigo: string, visible: boolean): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getOTs();
+  const idx = all.findIndex((o) => o.codigo === codigo);
+  if (idx < 0) throw new Error(`OT ${codigo} no encontrada`);
+  const rowNumber = idx + 2;
+  const value = visible ? "TRUE" : "FALSE";
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `OTs!F${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[value]] },
+  });
+  return { ok: true };
+}
 
 // ============================================================
 // LECTURA/ESCRITURA — SEDES (para mapa dinámico)
 // ============================================================
-
 export async function getSedes(): Promise<Sede[]> {
   try {
     const sheets = getClient();
@@ -534,45 +464,108 @@ export async function deleteSede(nombre: string): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-export async function deleteOt(codigo: string): Promise<{ ok: true }> {
+// ============================================================
+// REGENERAR CRONOGRAMA_VISUAL
+// ============================================================
+export async function regenerarCronogramaVisual(
+  year: number,
+  month?: number
+): Promise<{ ok: true; filas: number; columnas: number }> {
   const sheets = getClient();
-  const all = await getOTs();
-  const filtered = all.filter((o) => o.codigo !== codigo);
-  
-  const header = [["codigo", "cliente", "sede", "estado", "activo", "visible_mapa"]];
-  const rows = filtered.map((o) => [o.codigo, o.cliente, o.sede, o.estado, o.activo ? "TRUE" : "FALSE", o.visible_mapa ? "TRUE" : "FALSE"]);
+  const tecnicos = (await getTecnicos()).filter((t) => t.activo);
+  const ots = await getOTs();
+  const otMap: Record<string, OT> = {};
+  for (const o of ots) otMap[o.codigo] = o;
+
+  const entries = await getCronograma();
+  const map: Record<string, EntradaCronograma> = {};
+  for (const e of entries) map[`${e.tecnico_id}|${e.fecha}`] = e;
+
+  const mesesAGenerar: number[] = month ? [month] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+  const DOW_COMPLETO = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+  const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+  const filaMes: string[] = ["MES", "Nombre", "Cargo"];
+  const filaDias: string[] = ["N°", "Nombre", "Cargo"];
+
+  for (const mes of mesesAGenerar) {
+    const last = new Date(year, mes, 0).getDate();
+    for (let d = 1; d <= last; d++) {
+      if (d === 1) {
+        filaMes.push(`${MESES_ES[mes - 1].toUpperCase()} ${year}`);
+      } else {
+        filaMes.push("");
+      }
+      const date = new Date(year, mes - 1, d);
+      filaDias.push(`${String(d).padStart(2, "0")}/${mes} - ${DOW_COMPLETO[date.getDay()]}`);
+    }
+  }
+
+  const rows: string[][] = [filaMes, filaDias];
+
+  for (let i = 0; i < tecnicos.length; i++) {
+    const t = tecnicos[i];
+    const row: string[] = [String(i + 1), t.nombre, t.cargo];
+
+    for (const mes of mesesAGenerar) {
+      const last = new Date(year, mes, 0).getDate();
+      for (let d = 1; d <= last; d++) {
+        const iso = `${year}-${String(mes).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        const e = map[`${t.id}|${iso}`];
+        if (!e) {
+          row.push("");
+          continue;
+        }
+        let cellText = e.actividad;
+        if (e.ots_asignadas && e.ots_asignadas !== "—") {
+          const codigos = e.ots_asignadas
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+          for (const cod of codigos) {
+            const ot = otMap[cod];
+            let detalleOt = "";
+            if (e.detalle && e.detalle !== "—") {
+              const lineas = e.detalle.split("\n");
+              for (let li = 0; li < lineas.length; li++) {
+                const match = lineas[li].match(/^(\S+):$/);
+                if (match && match[1] === cod) {
+                  if (li + 1 < lineas.length) {
+                    detalleOt = lineas[li + 1];
+                  }
+                  break;
+                }
+              }
+            }
+            if (detalleOt) {
+              cellText += `\n${cod}:\n${detalleOt}`;
+            } else if (ot) {
+              const desc = `${ot.cliente}${ot.sede ? " " + ot.sede : ""}`.trim();
+              cellText += `\n${cod}:\n${desc}`;
+            } else {
+              cellText += `\n${cod}:`;
+            }
+          }
+        } else if (e.detalle && e.detalle !== "—") {
+          cellText += `\n${e.detalle}`;
+        }
+        row.push(cellText);
+      }
+    }
+    rows.push(row);
+  }
+
+  const totalColumnas = 3 + mesesAGenerar.reduce(
+    (sum, mes) => sum + new Date(year, mes, 0).getDate(),
+    0
+  );
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
-    range: "OTs!A1:Z",
+    range: "Cronograma_Visual!A1:ZZ",
   });
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: "OTs!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [...header, ...rows] },
-  });
-
-  return { ok: true };
-}
-
-export async function updateOtVisible(codigo: string, visible: boolean): Promise<{ ok: true }> {
-  const sheets = getClient();
-  const all = await getOTs();
-  const idx = all.findIndex((o) => o.codigo === codigo);
-  if (idx < 0) throw new Error(`OT ${codigo} no encontrada`);
-  const rowNumber = idx + 2;
-  const value = visible ? "TRUE" : "FALSE";
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `OTs!F${rowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[value]] },
-  });
-  return { ok: true };
-}
-  
   const lastCol = colToLetter(totalColumnas);
 
   await sheets.spreadsheets.values.update({
