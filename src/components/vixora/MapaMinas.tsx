@@ -5,7 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import { findMinaCoord, type MinaCoord } from "@/lib/minasData";
-import type { OT, Tecnico } from "@/lib/types";
+import type { OT, Tecnico, Sede } from "@/lib/types";
 import { Search, X, Calendar, Info, RefreshCw, Check } from "lucide-react";
 
 interface MinaAgrupada {
@@ -32,10 +32,11 @@ export function MapaMinas() {
   const [selectedMina, setSelectedMina] = useState<MinaAgrupada | null>(null);
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
-  
-  // FIX: Estado para forzar recarga de imagen
   const [imgKey, setImgKey] = useState(0);
   
+  // NUEVO: Estado para sedes dinámicas desde Excel
+  const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
+
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [inputFin, setInputFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
@@ -46,24 +47,48 @@ export function MapaMinas() {
   const handleActualizar = async () => {
     setActualizando(true);
     await cargarDatosSilencioso();
+    // Volver a cargar sedes del Excel
+    try {
+      const res = await fetch("/api/sedes", { cache: "no-store" });
+      const json = await res.json();
+      if (json.ok) setSedesExcel(json.data);
+    } catch (err) {
+      console.error("Error al cargar sedes:", err);
+    }
     setActualizando(false);
   };
+
+  // Cargar sedes del Excel al montar
+  useEffect(() => {
+    fetch("/api/sedes", { cache: "no-store" })
+      .then(res => res.json())
+      .then(json => { if (json.ok) setSedesExcel(json.data); })
+      .catch(err => console.error("Error:", err));
+  }, []);
 
   const handleAplicarFechas = () => {
     setFechaInicio(inputInicio);
     setFechaFin(inputFin);
   };
 
+  // FIX: Buscar primero en Excel, luego en minasData.ts
   const getCoordDeOt = (ot: OT): MinaCoord | null => {
-    if (ot.sede && ot.sede.trim()) {
-      const c = findMinaCoord(ot.sede);
-      if (c) return c;
-    }
-    if (ot.cliente && ot.cliente.trim()) {
-      const c = findMinaCoord(ot.cliente);
-      if (c) return c;
-    }
-    return null;
+    const buscarEn = (texto: string): MinaCoord | null => {
+      if (!texto || !texto.trim()) return null;
+      const textoUpper = texto.toUpperCase().trim();
+      
+      // 1. Buscar en sedes del Excel
+      let found = sedesExcel.find(s => s.nombre.toUpperCase() === textoUpper);
+      if (found) return { ...found };
+      
+      found = sedesExcel.find(s => textoUpper.includes(s.nombre.toUpperCase()) || s.nombre.toUpperCase().includes(textoUpper));
+      if (found) return { ...found };
+      
+      // 2. Fallback a minasData.ts
+      return findMinaCoord(texto);
+    };
+
+    return buscarEn(ot.sede) || buscarEn(ot.cliente);
   };
 
   const otsValidas = useMemo(() => {
@@ -84,7 +109,7 @@ export function MapaMinas() {
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
     return Object.values(grupos);
-  }, [otsValidas]);
+  }, [otsValidas, sedesExcel]);
 
   const minasFiltradas = useMemo(() => {
     if (!query) return minasAgrupadas;
@@ -194,7 +219,6 @@ export function MapaMinas() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Panel lateral izquierdo */}
       <div className="w-72 shrink-0 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-3 border-b border-gray-200 bg-white shrink-0">
           <div className="flex items-center justify-between mb-2">
@@ -275,16 +299,13 @@ export function MapaMinas() {
         </div>
       </div>
 
-      {/* Mapa + panel detalle */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 relative">
           <div ref={containerRef} className="w-full h-full" style={{ minHeight: "400px" }} />
         </div>
 
-        {/* Panel detalle inferior */}
         {selectedMina && (
           <div className="h-80 shrink-0 bg-white border-t border-gray-200 flex">
-            {/* Columna 1: OTs y Técnicos */}
             <div className="flex-1 flex flex-col border-r border-gray-200 min-w-0">
               <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
                 <div>
@@ -360,7 +381,6 @@ export function MapaMinas() {
               </div>
             </div>
 
-            {/* Columna 2: Dato curioso con imagen real */}
             <div className="w-56 shrink-0 flex flex-col bg-white">
               <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between bg-gray-50">
                 <div className="flex items-center gap-2">
