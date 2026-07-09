@@ -2,7 +2,7 @@
 
 import { useStore } from "@/lib/store";
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X } from "lucide-react";
+import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X, ChevronDown, ChevronUp } from "lucide-react";
 
 export function AdminPanel() {
   const { cargarDatosSilencioso, showToast } = useStore();
@@ -17,6 +17,7 @@ export function AdminPanel() {
   const [formSede, setFormSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   
   const [tabActivo, setTabActivo] = useState<"ots" | "sedes">("ots");
+  const [sedeExpandida, setSedeExpandida] = useState<string | null>(null);
 
   const fetchAllData = async () => {
     setCargando(true);
@@ -96,7 +97,7 @@ export function AdminPanel() {
     }
   };
 
-  const handleToggleVisible = async (codigo: string, visible: boolean) => {
+  const handleToggleVisibleOt = async (codigo: string, visible: boolean) => {
     try {
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "toggle_visible", codigo, visible: !visible }) });
       const json = await res.json();
@@ -161,7 +162,20 @@ export function AdminPanel() {
     }
   };
 
-  const getOtCount = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre).length;
+  // NUEVO: Ocultar/mostrar sede en el mapa
+  const handleToggleVisibleSede = async (nombre: string, visible: boolean) => {
+    try {
+      const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "toggle_visible_sede", nombre, visible: !visible }) });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await fetchAllData();
+      showToast(`Sede ${!visible ? 'visible' : 'oculta'} en el mapa`, "ok");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Error", "error");
+    }
+  };
+
+  const getOtsDeSede = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre);
 
   return (
     <div className="p-6 max-w-7xl mx-auto overflow-y-auto h-full">
@@ -227,7 +241,7 @@ export function AdminPanel() {
                     </div>
                     <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>{ot.estado}</span>
                     <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => handleToggleVisible(ot.codigo, ot.visible_mapa ?? true)} className={`p-1.5 rounded ${ot.visible_mapa ? "text-green-600 bg-green-50" : "text-gray-400 bg-gray-100"}`} title="Visibilidad mapa">{ot.visible_mapa ? <Eye size={14} /> : <EyeOff size={14} />}</button>
+                      <button onClick={() => handleToggleVisibleOt(ot.codigo, ot.visible_mapa ?? true)} className={`p-1.5 rounded ${ot.visible_mapa ? "text-green-600 bg-green-50" : "text-gray-400 bg-gray-100"}`} title="Visibilidad mapa">{ot.visible_mapa ? <Eye size={14} /> : <EyeOff size={14} />}</button>
                       <button onClick={() => handleEditOt(ot)} className="p-1.5 rounded text-blue-600 bg-blue-50 hover:bg-blue-100" title="Editar"><Pencil size={14} /></button>
                       <button onClick={() => handleDeleteOt(ot.codigo)} className="p-1.5 rounded text-red-600 bg-red-50 hover:bg-red-100" title="Eliminar"><Trash2 size={14} /></button>
                     </div>
@@ -241,7 +255,6 @@ export function AdminPanel() {
 
       {tabActivo === "sedes" && (
         <div className="space-y-6">
-          {/* Formulario Nueva/Editar Sede */}
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               {editandoSede ? <Pencil size={16} className="text-[#E91E63]" /> : <Plus size={16} className="text-[#E91E63]" />}
@@ -283,7 +296,6 @@ export function AdminPanel() {
             </div>
           </div>
 
-          {/* Tabla estilo Excel */}
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
@@ -295,7 +307,7 @@ export function AdminPanel() {
                     <th className="px-3 py-2 text-left font-semibold text-gray-600">Región</th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-600">Ciudad</th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-600">Dato Curioso</th>
-                    <th className="px-3 py-2 text-left font-semibold text-gray-600">OTs</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-600">OTs</th>
                     <th className="px-3 py-2 text-right font-semibold text-gray-600">Acciones</th>
                   </tr>
                 </thead>
@@ -303,21 +315,58 @@ export function AdminPanel() {
                   {cargando ? (
                     <tr><td colSpan={8} className="text-center py-4 text-gray-400">Cargando...</td></tr>
                   ) : (
-                    sedes.map((sede) => (
-                      <tr key={sede.nombre} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="px-3 py-2 font-medium text-gray-900">{sede.nombre}</td>
-                        <td className="px-3 py-2 text-gray-600">{sede.lat}</td>
-                        <td className="px-3 py-2 text-gray-600">{sede.lng}</td>
-                        <td className="px-3 py-2 text-gray-600">{sede.region}</td>
-                        <td className="px-3 py-2 text-gray-600">{sede.ciudad}</td>
-                        <td className="px-3 py-2 text-gray-500 max-w-xs truncate">{sede.datoCurioso}</td>
-                        <td className="px-3 py-2 text-center"><span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-medium">{getOtCount(sede.nombre)}</span></td>
-                        <td className="px-3 py-2 text-right">
-                          <button onClick={() => handleEditSede(sede)} className="p-1 rounded text-blue-600 hover:bg-blue-100" title="Editar"><Pencil size={14} /></button>
-                          <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1" title="Eliminar"><Trash2 size={14} /></button>
-                        </td>
-                      </tr>
-                    ))
+                    sedes.map((sede) => {
+                      const otsDeSede = getOtsDeSede(sede.nombre);
+                      const isExpanded = sedeExpandida === sede.nombre;
+                      const isVisible = sede.visible ?? true;
+                      return (
+                        <>
+                          <tr key={sede.nombre} className={`border-b border-gray-100 hover:bg-gray-50 ${!isVisible ? 'opacity-50' : ''}`}>
+                            <td className="px-3 py-2 font-medium text-gray-900">
+                              <div className="flex items-center gap-2">
+                                <button onClick={() => setSedeExpandida(isExpanded ? null : sede.nombre)} className="p-0.5 hover:bg-gray-200 rounded">
+                                  {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                </button>
+                                {sede.nombre}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-gray-600">{sede.lat}</td>
+                            <td className="px-3 py-2 text-gray-600">{sede.lng}</td>
+                            <td className="px-3 py-2 text-gray-600">{sede.region}</td>
+                            <td className="px-3 py-2 text-gray-600">{sede.ciudad}</td>
+                            <td className="px-3 py-2 text-gray-500 max-w-xs truncate">{sede.datoCurioso}</td>
+                            <td className="px-3 py-2 text-center"><span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-medium">{otsDeSede.length}</span></td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              <button onClick={() => handleToggleVisibleSede(sede.nombre, isVisible)} className={`p-1 rounded ${isVisible ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`} title="Visibilidad en mapa">
+                                {isVisible ? <Eye size={14} /> : <EyeOff size={14} />}
+                              </button>
+                              <button onClick={() => handleEditSede(sede)} className="p-1 rounded text-blue-600 hover:bg-blue-100 ml-1" title="Editar"><Pencil size={14} /></button>
+                              <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1" title="Eliminar"><Trash2 size={14} /></button>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-gray-50">
+                              <td colSpan={8} className="px-4 py-2">
+                                <div className="text-[10px] font-bold text-gray-500 uppercase mb-2">OTs Asignadas ({otsDeSede.length}):</div>
+                                {otsDeSede.length === 0 ? (
+                                  <p className="text-[10px] text-gray-400">No hay OTs asignadas a esta sede.</p>
+                                ) : (
+                                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                    {otsDeSede.map(ot => (
+                                      <div key={ot.codigo} className="flex items-center gap-2 text-[10px] bg-white p-1.5 rounded border border-gray-100">
+                                        <span className="font-mono font-bold text-gray-900">{ot.codigo}</span>
+                                        <span className="text-gray-600 truncate flex-1">{ot.cliente}</span>
+                                        <span className={`px-1 py-0.5 rounded font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>{ot.estado.slice(0,3)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
