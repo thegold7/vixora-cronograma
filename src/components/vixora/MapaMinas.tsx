@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
-import { findMinaCoord, MINAS_PERU, type MinaCoord } from "@/lib/minasData";
+import { MINAS_PERU, type MinaCoord } from "@/lib/minasData";
 import type { OT, Tecnico, Sede } from "@/lib/types";
 import { Search, X, Calendar, Info, RefreshCw, Check } from "lucide-react";
 
@@ -34,6 +34,7 @@ export function MapaMinas() {
   const [actualizando, setActualizando] = useState(false);
   const [imgKey, setImgKey] = useState(0);
   const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
+  const [ocultarSinOts, setOcultarSinOts] = useState(true); // NUEVO: ocultar por defecto
   
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
@@ -74,26 +75,16 @@ export function MapaMinas() {
     setFechaFin(hoyStr);
   };
 
-  // FIX: Cargar TODAS las sedes (Excel + Predefinidas)
   const todasLasSedes = useMemo(() => {
     const mapaSedes = new Map<string, MinaCoord>();
-    
-    // 1. Predefinidas
     MINAS_PERU.forEach(s => mapaSedes.set(s.nombre.toUpperCase(), s));
-    
-    // 2. Excel (sobrescribe si hay duplicados)
     sedesExcel.forEach(s => {
+      // FIX: No cargar sedes si visible=FALSE en Excel
+      if (s.visible === false) return; 
       mapaSedes.set(s.nombre.toUpperCase(), { 
-        nombre: s.nombre, 
-        lat: s.lat, 
-        lng: s.lng, 
-        region: s.region, 
-        ciudad: s.ciudad, 
-        datoCurioso: s.datoCurioso, 
-        foto_ciudad: s.foto_ciudad 
+        nombre: s.nombre, lat: s.lat, lng: s.lng, region: s.region, ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad 
       });
     });
-    
     return Array.from(mapaSedes.values());
   }, [sedesExcel]);
 
@@ -101,16 +92,11 @@ export function MapaMinas() {
     return ots.filter(o => o.estado !== "PERDIDO" && (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE"));
   }, [ots]);
 
-  // FIX: Iniciar minasAgrupadas con TODAS las sedes, luego agregar OTs
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
-    
-    // Inicializar todas las sedes con 0 OTs
     for (const sede of todasLasSedes) {
       grupos[sede.nombre] = { coord: sede, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
     }
-    
-    // Asignar OTs a las sedes
     for (const ot of otsValidas) {
       let coord: MinaCoord | null = null;
       const buscarEn = (texto: string) => {
@@ -118,32 +104,34 @@ export function MapaMinas() {
         const textoUpper = texto.toUpperCase().trim();
         return todasLasSedes.find(s => s.nombre.toUpperCase() === textoUpper || textoUpper.includes(s.nombre.toUpperCase()) || s.nombre.toUpperCase().includes(textoUpper));
       };
-      
       coord = buscarEn(ot.sede) || buscarEn(ot.cliente);
       if (!coord) continue;
-      
       const key = coord.nombre;
       if (!grupos[key]) grupos[key] = { coord, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
-      
       grupos[key].ots.push(ot);
       grupos[key].total++;
       if (ot.estado === "EN PROCESO") grupos[key].enProceso++;
       else if (ot.estado === "FINALIZADO") grupos[key].finalizado++;
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
-    
     return Object.values(grupos);
   }, [otsValidas, todasLasSedes]);
 
   const minasFiltradas = useMemo(() => {
-    if (!query) return minasAgrupadas;
-    const q = query.toLowerCase();
-    return minasAgrupadas.filter(g => 
-      g.coord.nombre.toLowerCase().includes(q) ||
-      g.coord.region.toLowerCase().includes(q) ||
-      g.ots.some(ot => ot.codigo.toLowerCase().includes(q) || ot.cliente.toLowerCase().includes(q))
-    );
-  }, [minasAgrupadas, query]);
+    let result = minasAgrupadas;
+    if (ocultarSinOts) {
+      result = result.filter(g => g.total > 0);
+    }
+    if (query) {
+      const q = query.toLowerCase();
+      result = result.filter(g => 
+        g.coord.nombre.toLowerCase().includes(q) ||
+        g.coord.region.toLowerCase().includes(q) ||
+        g.ots.some(ot => ot.codigo.toLowerCase().includes(q) || ot.cliente.toLowerCase().includes(q))
+      );
+    }
+    return result;
+  }, [minasAgrupadas, query, ocultarSinOts]);
 
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
     const tecnicosMap: Record<string, TecnicoAgrupado> = {};
@@ -184,13 +172,12 @@ export function MapaMinas() {
     markersRef.current = [];
     for (const mina of minasFiltradas) {
       const { coord, enProceso, finalizado, pendiente, total } = mina;
-      let color = "#6b7280"; // Gris si tiene 0 OTs
+      let color = "#6b7280";
       if (total > 0) {
         if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b";
         else if (finalizado > 0) color = "#10b981";
         else if (pendiente > 0) color = "#3b82f6";
       }
-      
       const radius = total > 0 ? Math.min(8 + total * 2, 25) : 6;
       const marker = L.circleMarker([coord.lat, coord.lng], { radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8 }).addTo(mapRef.current!);
       const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
@@ -246,6 +233,11 @@ export function MapaMinas() {
             <button onClick={handleAplicarFechas} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
               <Check size={10} /> Aplicar fechas
             </button>
+            {/* NUEVO: Checkbox ocultar vacías */}
+            <label className="flex items-center gap-1.5 text-[10px] text-gray-600 mt-1 cursor-pointer">
+              <input type="checkbox" checked={ocultarSinOts} onChange={(e) => setOcultarSinOts(e.target.checked)} className="rounded" />
+              Ocultar sedes sin OTs
+            </label>
           </div>
         </div>
 
