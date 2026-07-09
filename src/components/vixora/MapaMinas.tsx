@@ -6,11 +6,12 @@ import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import { MINAS_PERU, type MinaCoord } from "@/lib/minasData";
 import type { OT, Tecnico, Sede } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, Check } from "lucide-react";
+import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
 
 interface MinaAgrupada {
   coord: MinaCoord;
   ots: OT[];
+  otsEnRango: OT[];
   enProceso: number;
   finalizado: number;
   pendiente: number;
@@ -34,7 +35,8 @@ export function MapaMinas() {
   const [actualizando, setActualizando] = useState(false);
   const [imgKey, setImgKey] = useState(0);
   const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
-  const [ocultarSinOts, setOcultarSinOts] = useState(true); // NUEVO: ocultar por defecto
+  const [ocultarSinOts, setOcultarSinOts] = useState(true);
+  const [otsExpandidas, setOtsExpandidas] = useState(false);
   
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
@@ -75,27 +77,47 @@ export function MapaMinas() {
     setFechaFin(hoyStr);
   };
 
+  // FIX: Cargar sedes visibles y fusionar duplicados por coordenadas
   const todasLasSedes = useMemo(() => {
     const mapaSedes = new Map<string, MinaCoord>();
     MINAS_PERU.forEach(s => mapaSedes.set(s.nombre.toUpperCase(), s));
     sedesExcel.forEach(s => {
-      // FIX: No cargar sedes si visible=FALSE en Excel
-      if (s.visible === false) return; 
-      mapaSedes.set(s.nombre.toUpperCase(), { 
-        nombre: s.nombre, lat: s.lat, lng: s.lng, region: s.region, ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad 
-      });
+      if (s.visible === false) return;
+      mapaSedes.set(s.nombre.toUpperCase(), { nombre: s.nombre, lat: s.lat, lng: s.lng, region: s.region, ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad });
     });
-    return Array.from(mapaSedes.values());
+    
+    // Fusionar por coordenadas similares (redondeo a 4 decimales)
+    const porCoord = new Map<string, MinaCoord>();
+    Array.from(mapaSedes.values()).forEach(s => {
+      const key = `${s.lat.toFixed(4)},${s.lng.toFixed(4)}`;
+      if (!porCoord.has(key)) {
+        porCoord.set(key, s);
+      }
+    });
+    
+    return Array.from(porCoord.values());
   }, [sedesExcel]);
 
   const otsValidas = useMemo(() => {
     return ots.filter(o => o.estado !== "PERDIDO" && (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE"));
   }, [ots]);
 
+  // FIX: Filtrar OTs por rango de fechas (basado en cronograma)
+  const getOtsEnRango = (todasLasOts: OT[]): OT[] => {
+    const codigosEnRango = new Set<string>();
+    for (const e of Object.values(cronograma)) {
+      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        e.ots_asignadas.split(",").map(s => s.trim()).forEach(c => codigosEnRango.add(c));
+      }
+    }
+    return todasLasOts.filter(ot => codigosEnRango.has(ot.codigo));
+  };
+
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
     for (const sede of todasLasSedes) {
-      grupos[sede.nombre] = { coord: sede, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
+      grupos[sede.nombre] = { coord: sede, ots: [], otsEnRango: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
     }
     for (const ot of otsValidas) {
       let coord: MinaCoord | null = null;
@@ -107,15 +129,21 @@ export function MapaMinas() {
       coord = buscarEn(ot.sede) || buscarEn(ot.cliente);
       if (!coord) continue;
       const key = coord.nombre;
-      if (!grupos[key]) grupos[key] = { coord, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
+      if (!grupos[key]) grupos[key] = { coord, ots: [], otsEnRango: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
       grupos[key].ots.push(ot);
       grupos[key].total++;
       if (ot.estado === "EN PROCESO") grupos[key].enProceso++;
       else if (ot.estado === "FINALIZADO") grupos[key].finalizado++;
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
+    
+    // Calcular OTs en rango para cada sede
+    Object.values(grupos).forEach(g => {
+      g.otsEnRango = getOtsEnRango(g.ots);
+    });
+    
     return Object.values(grupos);
-  }, [otsValidas, todasLasSedes]);
+  }, [otsValidas, todasLasSedes, cronograma, fechaInicio, fechaFin]);
 
   const minasFiltradas = useMemo(() => {
     let result = minasAgrupadas;
@@ -133,14 +161,17 @@ export function MapaMinas() {
     return result;
   }, [minasAgrupadas, query, ocultarSinOts]);
 
+  // FIX: Técnicos filtrados por rango de fechas y solo OTs en rango
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
     const tecnicosMap: Record<string, TecnicoAgrupado> = {};
+    const codigosOtEnRango = new Set(mina.otsEnRango.map(ot => ot.codigo));
+    
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
-        const perteneceAMina = codigos.some(cod => mina.ots.some(ot => ot.codigo === cod));
+        const perteneceAMina = codigos.some(cod => codigosOtEnRango.has(cod));
         if (perteneceAMina) {
           const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
           if (tecnico && tecnico.activo) {
@@ -156,6 +187,18 @@ export function MapaMinas() {
       }
     }
     return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
+  };
+
+  // Toggle visibilidad OT
+  const handleToggleVisibleOt = async (codigo: string, visible: boolean) => {
+    try {
+      const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "toggle_visible", codigo, visible: !visible }) });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await cargarDatosSilencioso();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Error", "error");
+    }
   };
 
   useEffect(() => {
@@ -182,7 +225,7 @@ export function MapaMinas() {
       const marker = L.circleMarker([coord.lat, coord.lng], { radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8 }).addTo(mapRef.current!);
       const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
       marker.bindPopup(popupHtml);
-      marker.on("click", () => setSelectedMina(mina));
+      marker.on("click", () => { setSelectedMina(mina); setOtsExpandidas(false); });
       markersRef.current.push(marker);
     }
   }, [minasFiltradas]);
@@ -191,6 +234,7 @@ export function MapaMinas() {
     if (!mapRef.current) return;
     mapRef.current.flyTo([mina.coord.lat, mina.coord.lng], 8, { duration: 1.2 });
     setSelectedMina(mina);
+    setOtsExpandidas(false);
   };
 
   const getIniciales = (nombre: string) => {
@@ -202,6 +246,8 @@ export function MapaMinas() {
     const [y, m, d] = iso.split("-");
     return `${d}/${m}`;
   };
+
+  const { showToast } = useStore();
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -220,8 +266,7 @@ export function MapaMinas() {
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1 text-[10px] text-gray-600">
-                <Calendar size={10} className="text-gray-400" />
-                <span className="font-semibold">Rango de fechas:</span>
+                <Calendar size={10} className="text-gray-400" /><span className="font-semibold">Rango de fechas:</span>
               </div>
               <button onClick={handleHoy} className="text-[10px] text-[#E91E63] font-bold hover:underline">Hoy</button>
             </div>
@@ -230,10 +275,7 @@ export function MapaMinas() {
               <span className="text-gray-400">→</span>
               <input type="date" value={inputFin} onChange={(e) => setInputFin(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
             </div>
-            <button onClick={handleAplicarFechas} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
-              <Check size={10} /> Aplicar fechas
-            </button>
-            {/* NUEVO: Checkbox ocultar vacías */}
+            <button onClick={handleAplicarFechas} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]"><Check size={10} /> Aplicar fechas</button>
             <label className="flex items-center gap-1.5 text-[10px] text-gray-600 mt-1 cursor-pointer">
               <input type="checkbox" checked={ocultarSinOts} onChange={(e) => setOcultarSinOts(e.target.checked)} className="rounded" />
               Ocultar sedes sin OTs
@@ -291,17 +333,19 @@ export function MapaMinas() {
               </div>
               <div className="flex-1 overflow-y-auto p-3">
                 <div className="flex gap-3 mb-3 text-xs">
-                  <span className="text-yellow-600">⚡ {selectedMina.enProceso} en proceso</span>
-                  <span className="text-green-600">✓ {selectedMina.finalizado} finalizado</span>
-                  <span className="text-blue-600">⏳ {selectedMina.pendiente} pendiente</span>
+                  <span className="text-yellow-600">⚡ {selectedMina.enProceso}</span>
+                  <span className="text-green-600">✓ {selectedMina.finalizado}</span>
+                  <span className="text-blue-600">⏳ {selectedMina.pendiente}</span>
+                  <span className="text-gray-400">Total: {selectedMina.total}</span>
                 </div>
                 
                 {(() => {
                   const tecnicosMina = getTecnicosEnMina(selectedMina);
                   return (
                     <>
-                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">Técnicos en proyecto ({tecnicosMina.length}):</div>
+                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">Técnicos en rango ({tecnicosMina.length}):</div>
                       <div className="space-y-1 mb-3">
+                        {tecnicosMina.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay técnicos en este rango de fechas</p>}
                         {tecnicosMina.map((t, i) => (
                           <div key={i} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
                             <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
@@ -325,21 +369,33 @@ export function MapaMinas() {
                   );
                 })()}
 
-                <div className="text-[10px] font-bold text-gray-500 uppercase mb-1">OTs en esta mina:</div>
-                <div className="space-y-1">
-                  {selectedMina.ots.map((ot) => {
-                    const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700";
-                    return (
-                      <div key={ot.codigo} className="p-1.5 rounded border border-gray-200 flex items-center gap-2 hover:bg-gray-50">
-                        <div className="text-[10px] font-mono font-bold text-gray-900 w-20">{ot.codigo}</div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
-                        </div>
-                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>{ot.estado.slice(0, 3)}</span>
-                      </div>
-                    );
-                  })}
+                {/* OTs desplegable con visibilidad */}
+                <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center justify-between">
+                  <span>OTs en rango ({selectedMina.otsEnRango.length}):</span>
+                  <button onClick={() => setOtsExpandidas(!otsExpandidas)} className="p-0.5 hover:bg-gray-200 rounded">
+                    {otsExpandidas ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  </button>
                 </div>
+                {otsExpandidas && (
+                  <div className="space-y-1">
+                    {selectedMina.otsEnRango.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay OTs en este rango de fechas</p>}
+                    {selectedMina.otsEnRango.map((ot) => {
+                      const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700";
+                      return (
+                        <div key={ot.codigo} className="p-1.5 rounded border border-gray-200 flex items-center gap-2 hover:bg-gray-50">
+                          <div className="text-[10px] font-mono font-bold text-gray-900 w-20">{ot.codigo}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
+                          </div>
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>{ot.estado.slice(0, 3)}</span>
+                          <button onClick={() => handleToggleVisibleOt(ot.codigo, ot.visible_mapa ?? true)} className={`p-1 rounded ${ot.visible_mapa ? "text-green-600 bg-green-50" : "text-gray-400 bg-gray-100"}`} title="Visibilidad">
+                            {ot.visible_mapa ? <Eye size={12} /> : <EyeOff size={12} />}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
 
