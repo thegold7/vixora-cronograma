@@ -24,12 +24,12 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
   return (
     <>
       <aside className="w-16 lg:w-56 shrink-0 flex flex-col text-white" style={{ backgroundColor: VIXORA_COLORS.dark }}>
-        {/* Logo completo */}
-        <div className="p-3 border-b border-white/10 flex items-center justify-center">
+        {/* Logo completo ajustado para ocupar más espacio horizontal sin aumentar altura */}
+        <div className="px-2 py-1 border-b border-white/10 flex items-center justify-center overflow-hidden">
           <img 
             src="https://i.postimg.cc/YqT9Wy0V/Gemini-Generated-Image-t218vtt218vtt218-Photoroom.png" 
             alt="VIXORA Cronograma" 
-            className="h-10 w-auto lg:h-12 object-contain"
+            className="h-12 w-full lg:h-14 object-contain"
             onError={(e) => {
               (e.target as HTMLImageElement).style.display = 'none';
             }}
@@ -38,9 +38,17 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
         
         <nav className="flex-1 p-2 space-y-1">
           <SidebarButton icon={<Calendar size={18} />} label="Cronograma" active={seccionActual === "cronograma"} onClick={() => onNavigate("cronograma")} />
-          <SidebarButton icon={<Users size={18} />} label="Técnicos" active={seccionActual === "tecnicos"} onClick={() => onNavigate("tecnicos")} />
-          <SidebarButton icon={<BarChart3 size={18} />} label="Dashboard" active={seccionActual === "estadisticas"} onClick={() => onNavigate("estadisticas")} />
+          
+          {/* Botones solo para editores */}
+          {modoAcceso === "editor" && (
+            <>
+              <SidebarButton icon={<Users size={18} />} label="Técnicos" active={seccionActual === "tecnicos"} onClick={() => onNavigate("tecnicos")} />
+              <SidebarButton icon={<BarChart3 size={18} />} label="Dashboard" active={seccionActual === "estadisticas"} onClick={() => onNavigate("estadisticas")} />
+            </>
+          )}
+
           <SidebarButton icon={<MapPin size={18} />} label="Mapa Minas" active={seccionActual === "mapa"} onClick={() => onNavigate("mapa")} />
+          
           {modoAcceso === "editor" && (
             <SidebarButton icon={<Settings size={18} />} label="Administración" active={seccionActual === "admin"} onClick={() => onNavigate("admin")} />
           )}
@@ -49,9 +57,13 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
         {seccionActual === "cronograma" && (
           <div className="p-2 space-y-1 border-t border-white/10">
             <SidebarButton icon={mostrarDetalles ? <Eye size={18} /> : <EyeOff size={18} />} label={mostrarDetalles ? "Ocultar detalles" : "Mostrar detalles"} active={false} onClick={toggleMostrarDetalles} />
-            <SidebarButton icon={<Download size={18} />} label="Exportar" active={false} onClick={() => setModalExportarAbierto(true)} />
+            
+            {/* Botones de exportar y Excel solo para editores */}
             {modoAcceso === "editor" && (
-              <SidebarButton icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />} label={regenerando ? "Actualizando..." : "Actualizar Excel visual (365 días)"} active={false} onClick={handleRegenerar} />
+              <>
+                <SidebarButton icon={<Download size={18} />} label="Exportar" active={false} onClick={() => setModalExportarAbierto(true)} />
+                <SidebarButton icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />} label={regenerando ? "Actualizando..." : "Actualizar Excel visual (365 días)"} active={false} onClick={handleRegenerar} />
+              </>
             )}
           </div>
         )}
