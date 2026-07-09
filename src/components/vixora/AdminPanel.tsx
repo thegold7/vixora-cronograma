@@ -1,8 +1,9 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { useState, useEffect } from "react";
-import { Plus, Trash2, Save, MapPin, RefreshCw, Pencil, X, ChevronDown, ChevronUp, Building2 } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Plus, Trash2, Save, MapPin, RefreshCw, Pencil, X, ChevronDown, ChevronUp, Building2, Upload, Search, ArrowUpDown } from "lucide-react";
+import { MINAS_PERU } from "@/lib/minasData";
 
 export function AdminPanel() {
   const { cargarDatosSilencioso, showToast } = useStore();
@@ -17,6 +18,8 @@ export function AdminPanel() {
   const [formSede, setFormSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   
   const [sedeExpandida, setSedeExpandida] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [filtroOts, setFiltroOts] = useState<"todas" | "conOts" | "sinOts" | "masOts" | "menosOts">("todas");
 
   const fetchAllData = async () => {
     setCargando(true);
@@ -38,121 +41,90 @@ export function AdminPanel() {
 
   useEffect(() => { fetchAllData(); }, []);
 
-  // === Handlers OTs ===
-  const resetFormOt = () => {
-    setEditandoTipo(null);
-    setEditandoId(null);
-    setFormOt({ codigo: "", cliente: "", sede: "", estado: "EN PROCESO" });
-  };
+  const getOtsDeSede = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre);
 
-  const handleEditOt = (ot: any) => {
-    setEditandoTipo("ot");
-    setEditandoId(ot.codigo);
-    setFormOt({ codigo: ot.codigo, cliente: ot.cliente, sede: ot.sede, estado: ot.estado });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  // Lógica de filtrado y ordenamiento
+  const sedesFiltradas = useMemo(() => {
+    let result = sedes.map(s => ({ ...s, otCount: getOtsDeSede(s.nombre).length }));
 
+    if (query) {
+      const q = query.toLowerCase();
+      result = result.filter(s => 
+        s.nombre.toLowerCase().includes(q) || 
+        s.ciudad.toLowerCase().includes(q) || 
+        s.region.toLowerCase().includes(q)
+      );
+    }
+
+    switch (filtroOts) {
+      case "conOts": result = result.filter(s => s.otCount > 0); break;
+      case "sinOts": result = result.filter(s => s.otCount === 0); break;
+      case "masOts": result = result.sort((a, b) => b.otCount - a.otCount); break;
+      case "menosOts": result = result.sort((a, b) => a.otCount - b.otCount); break;
+    }
+
+    return result;
+  }, [sedes, allOts, query, filtroOts]);
+
+  // === Handlers ===
+  const resetFormOt = () => { setEditandoTipo(null); setEditandoId(null); setFormOt({ codigo: "", cliente: "", sede: "", estado: "EN PROCESO" }); };
+  const handleEditOt = (ot: any) => { setEditandoTipo("ot"); setEditandoId(ot.codigo); setFormOt({ codigo: ot.codigo, cliente: ot.cliente, sede: ot.sede, estado: ot.estado }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleSubmitOt = async () => {
     if (!formOt.codigo || !formOt.cliente) return showToast("Código y cliente son obligatorios", "error");
     try {
-      if (editandoId) {
-        const res = await fetch("/api/ot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accion: "actualizar", codigoOriginal: editandoId, nuevoCodigo: formOt.codigo, cliente: formOt.cliente, sede: formOt.sede, estado: formOt.estado }),
-        });
-        const json = await res.json();
-        if (!json.ok) throw new Error(json.error);
-        showToast(`OT actualizada`, "ok");
-      } else {
-        const res = await fetch("/api/ot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accion: "agregar", codigo: formOt.codigo, cliente: formOt.cliente, sede: formOt.sede, estado: formOt.estado }),
-        });
-        const json = await res.json();
-        if (!json.ok) throw new Error(json.error);
-        showToast(`OT agregada`, "ok");
-      }
-      await fetchAllData();
-      await cargarDatosSilencioso();
-      resetFormOt();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Error", "error");
-    }
+      const accion = editandoId ? "actualizar" : "agregar";
+      const body = editandoId ? { accion, codigoOriginal: editandoId, nuevoCodigo: formOt.codigo, cliente: formOt.cliente, sede: formOt.sede, estado: formOt.estado } : { accion, ...formOt };
+      const res = await fetch("/api/ot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      showToast(`OT ${editandoId ? 'actualizada' : 'agregada'}`, "ok");
+      await fetchAllData(); await cargarDatosSilencioso(); resetFormOt();
+    } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
-
   const handleDeleteOt = async (codigo: string) => {
     if (!confirm(`¿Eliminar OT ${codigo}?`)) return;
     try {
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "eliminar_ot", codigo }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await fetchAllData();
-      await cargarDatosSilencioso();
-      showToast(`OT eliminada`, "ok");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Error", "error");
-    }
+      await fetchAllData(); await cargarDatosSilencioso(); showToast(`OT eliminada`, "ok");
+    } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
-  // === Handlers Sedes ===
-  const resetFormSede = () => {
-    setEditandoTipo(null);
-    setEditandoId(null);
-    setFormSede({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
-  };
-
-  const handleEditSede = (sede: any) => {
-    setEditandoTipo("sede");
-    setEditandoId(sede.nombre);
-    setFormSede({ nombre: sede.nombre, lat: String(sede.lat), lng: String(sede.lng), region: sede.region, ciudad: sede.ciudad, datoCurioso: sede.datoCurioso, foto_ciudad: sede.foto_ciudad });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
+  const resetFormSede = () => { setEditandoTipo(null); setEditandoId(null); setFormSede({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" }); };
+  const handleEditSede = (sede: any) => { setEditandoTipo("sede"); setEditandoId(sede.nombre); setFormSede({ nombre: sede.nombre, lat: String(sede.lat), lng: String(sede.lng), region: sede.region, ciudad: sede.ciudad, datoCurioso: sede.datoCurioso, foto_ciudad: sede.foto_ciudad }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleSubmitSede = async () => {
     if (!formSede.nombre || !formSede.lat || !formSede.lng) return showToast("Nombre, lat y lng son obligatorios", "error");
     try {
-      if (editandoId) {
-        const res = await fetch("/api/sedes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accion: "actualizar_sede", nombreOriginal: editandoId, newData: formSede }),
-        });
-        const json = await res.json();
-        if (!json.ok) throw new Error(json.error);
-        showToast(`Sede actualizada`, "ok");
-      } else {
-        const res = await fetch("/api/sedes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accion: "agregar", ...formSede }),
-        });
-        const json = await res.json();
-        if (!json.ok) throw new Error(json.error);
-        showToast(`Sede agregada`, "ok");
-      }
-      await fetchAllData();
-      resetFormSede();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Error", "error");
-    }
+      const accion = editandoId ? "actualizar_sede" : "agregar";
+      const body = editandoId ? { accion, nombreOriginal: editandoId, newData: formSede } : { accion, ...formSede };
+      const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      showToast(`Sede ${editandoId ? 'actualizada' : 'agregada'}`, "ok");
+      await fetchAllData(); resetFormSede();
+    } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
-
   const handleDeleteSede = async (nombre: string) => {
     if (!confirm(`¿Eliminar la sede ${nombre}?`)) return;
     try {
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "eliminar", nombre }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await fetchAllData();
-      showToast(`Sede eliminada`, "ok");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Error", "error");
-    }
+      await fetchAllData(); showToast(`Sede eliminada`, "ok");
+    } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
-  const getOtsDeSede = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre);
+  // NUEVO: Sincronizar TODO al Excel
+  const handleSincronizarTodo = async () => {
+    if (!confirm("¿Sobrescribir TODA la hoja 'Sedes' en Excel con las 30 sedes predefinidas? Esto no afectará las OTs.")) return;
+    try {
+      const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", sedes: MINAS_PERU }) });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await fetchAllData(); showToast("Sedes sincronizadas en Excel", "ok");
+    } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
+  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto overflow-y-auto h-full">
@@ -161,9 +133,14 @@ export function AdminPanel() {
           <h2 className="text-2xl font-bold text-gray-900">Panel de Administración</h2>
           <p className="text-sm text-gray-500">Gestión unificada de Sedes y OTs</p>
         </div>
-        <button onClick={() => { cargarDatosSilencioso(); fetchAllData(); }} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
-          <RefreshCw size={14} /> Actualizar
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleSincronizarTodo} className="flex items-center gap-1 px-3 py-1.5 text-xs text-[#E91E63] border border-[#E91E63] rounded hover:bg-pink-50">
+            <Upload size={14} /> Sincronizar Excel
+          </button>
+          <button onClick={() => { cargarDatosSilencioso(); fetchAllData(); }} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
+            <RefreshCw size={14} /> Actualizar
+          </button>
+        </div>
       </div>
 
       {/* Formulario flotante */}
@@ -219,6 +196,21 @@ export function AdminPanel() {
         </button>
       </div>
 
+      {/* Filtros y Búsqueda */}
+      <div className="flex gap-2 mb-4 items-center">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar sede o ciudad..." className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded" />
+        </div>
+        <select value={filtroOts} onChange={(e) => setFiltroOts(e.target.value as any)} className="px-2 py-1.5 text-xs border border-gray-200 rounded bg-white">
+          <option value="todas">Todas las sedes</option>
+          <option value="conOts">Con OTs asignadas</option>
+          <option value="sinOts">Sin OTs asignadas</option>
+          <option value="masOts">Con más OTs</option>
+          <option value="menosOts">Con menos OTs</option>
+        </select>
+      </div>
+
       {/* Tabla unificada */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -229,15 +221,16 @@ export function AdminPanel() {
                 <th className="px-3 py-2 text-left font-semibold text-gray-600">Sede / OT</th>
                 <th className="px-3 py-2 text-left font-semibold text-gray-600">Región / Cliente</th>
                 <th className="px-3 py-2 text-left font-semibold text-gray-600">Coordenadas</th>
-                <th className="px-3 py-2 text-left font-semibold text-gray-600">Estado / Dato</th>
+                <th className="px-3 py-2 text-left font-semibold text-gray-600">Ciudad / Estado</th>
+                <th className="px-3 py-2 text-center font-semibold text-gray-600">OTs</th>
                 <th className="px-3 py-2 text-right font-semibold text-gray-600">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {cargando ? (
-                <tr><td colSpan={6} className="text-center py-4 text-gray-400">Cargando...</td></tr>
+                <tr><td colSpan={7} className="text-center py-4 text-gray-400">Cargando...</td></tr>
               ) : (
-                sedes.map((sede) => {
+                sedesFiltradas.map((sede) => {
                   const otsDeSede = getOtsDeSede(sede.nombre);
                   const isExpanded = sedeExpandida === sede.nombre;
                   return (
@@ -251,7 +244,8 @@ export function AdminPanel() {
                         <td className="px-3 py-2 text-gray-900"><span className="flex items-center gap-1"><MapPin size={12} className="text-[#E91E63]" /> {sede.nombre}</span></td>
                         <td className="px-3 py-2 text-gray-600">{sede.region}</td>
                         <td className="px-3 py-2 text-gray-500 text-[10px]">{sede.lat}, {sede.lng}</td>
-                        <td className="px-3 py-2 text-gray-500">{sede.ciudad} · {otsDeSede.length} OTs</td>
+                        <td className="px-3 py-2 text-gray-500">{sede.ciudad}</td>
+                        <td className="px-3 py-2 text-center"><span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-medium">{otsDeSede.length}</span></td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">
                           <button onClick={() => handleEditSede(sede)} className="p-1 rounded text-blue-600 hover:bg-blue-100"><Pencil size={14} /></button>
                           <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1"><Trash2 size={14} /></button>
@@ -260,7 +254,7 @@ export function AdminPanel() {
                       {isExpanded && (
                         <>
                           {otsDeSede.length === 0 ? (
-                            <tr className="bg-gray-50"><td colSpan={6} className="px-8 py-2 text-[10px] text-gray-400 italic">No hay OTs asignadas a esta sede</td></tr>
+                            <tr className="bg-gray-50"><td colSpan={7} className="px-8 py-2 text-[10px] text-gray-400 italic">No hay OTs asignadas a esta sede</td></tr>
                           ) : (
                             otsDeSede.map(ot => (
                               <tr key={ot.codigo} className="bg-gray-50 border-b border-gray-100">
@@ -271,6 +265,7 @@ export function AdminPanel() {
                                 <td className="px-3 py-1.5">
                                   <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>{ot.estado}</span>
                                 </td>
+                                <td className="px-3 py-1.5"></td>
                                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
                                   <button onClick={() => handleEditOt(ot)} className="p-1 rounded text-blue-600 hover:bg-blue-100"><Pencil size={12} /></button>
                                   <button onClick={() => handleDeleteOt(ot.codigo)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1"><Trash2 size={12} /></button>
