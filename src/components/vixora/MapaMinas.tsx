@@ -33,21 +33,17 @@ export function MapaMinas() {
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
   const [imgKey, setImgKey] = useState(0);
-  
-  // NUEVO: Estado para sedes dinámicas desde Excel
   const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
-
+  
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [inputFin, setInputFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
-  
   const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
 
   const handleActualizar = async () => {
     setActualizando(true);
     await cargarDatosSilencioso();
-    // Volver a cargar sedes del Excel
     try {
       const res = await fetch("/api/sedes", { cache: "no-store" });
       const json = await res.json();
@@ -58,7 +54,6 @@ export function MapaMinas() {
     setActualizando(false);
   };
 
-  // Cargar sedes del Excel al montar
   useEffect(() => {
     fetch("/api/sedes", { cache: "no-store" })
       .then(res => res.json())
@@ -71,23 +66,24 @@ export function MapaMinas() {
     setFechaFin(inputFin);
   };
 
-  // FIX: Buscar primero en Excel, luego en minasData.ts
+  const handleHoy = () => {
+    const hoyStr = formatFechaISO(new Date());
+    setInputInicio(hoyStr);
+    setInputFin(hoyStr);
+    setFechaInicio(hoyStr);
+    setFechaFin(hoyStr);
+  };
+
   const getCoordDeOt = (ot: OT): MinaCoord | null => {
     const buscarEn = (texto: string): MinaCoord | null => {
       if (!texto || !texto.trim()) return null;
       const textoUpper = texto.toUpperCase().trim();
-      
-      // 1. Buscar en sedes del Excel
       let found = sedesExcel.find(s => s.nombre.toUpperCase() === textoUpper);
       if (found) return { ...found };
-      
       found = sedesExcel.find(s => textoUpper.includes(s.nombre.toUpperCase()) || s.nombre.toUpperCase().includes(textoUpper));
       if (found) return { ...found };
-      
-      // 2. Fallback a minasData.ts
       return findMinaCoord(texto);
     };
-
     return buscarEn(ot.sede) || buscarEn(ot.cliente);
   };
 
@@ -123,32 +119,20 @@ export function MapaMinas() {
 
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
     const tecnicosMap: Record<string, TecnicoAgrupado> = {};
-    
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
-      
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
         const perteneceAMina = codigos.some(cod => mina.ots.some(ot => ot.codigo === cod));
-        
         if (perteneceAMina) {
           const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
           if (tecnico && tecnico.activo) {
             if (!tecnicosMap[tecnico.id]) {
-              tecnicosMap[tecnico.id] = {
-                tecnico,
-                fechaInicio: e.fecha,
-                fechaFin: e.fecha,
-                actividades: new Set([e.actividad]),
-              };
+              tecnicosMap[tecnico.id] = { tecnico, fechaInicio: e.fecha, fechaFin: e.fecha, actividades: new Set([e.actividad]) };
             } else {
-              if (e.fecha < tecnicosMap[tecnico.id].fechaInicio) {
-                tecnicosMap[tecnico.id].fechaInicio = e.fecha;
-              }
-              if (e.fecha > tecnicosMap[tecnico.id].fechaFin) {
-                tecnicosMap[tecnico.id].fechaFin = e.fecha;
-              }
+              if (e.fecha < tecnicosMap[tecnico.id].fechaInicio) tecnicosMap[tecnico.id].fechaInicio = e.fecha;
+              if (e.fecha > tecnicosMap[tecnico.id].fechaFin) tecnicosMap[tecnico.id].fechaFin = e.fecha;
               tecnicosMap[tecnico.id].actividades.add(e.actividad);
             }
           }
@@ -170,31 +154,15 @@ export function MapaMinas() {
     if (!mapRef.current) return;
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
-
     for (const mina of minasFiltradas) {
       const { coord, enProceso, finalizado, pendiente, total } = mina;
       let color = "#6b7280";
       if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b";
       else if (finalizado > 0) color = "#10b981";
       else if (pendiente > 0) color = "#3b82f6";
-      
       const radius = Math.min(8 + total * 2, 25);
-      const marker = L.circleMarker([coord.lat, coord.lng], {
-        radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8
-      }).addTo(mapRef.current!);
-
-      const popupHtml = `
-        <div style="font-family: -apple-system, sans-serif; min-width: 180px;">
-          <div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div>
-          <div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div>
-          <div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;">
-            <span style="color: #f59e0b;">⚡ ${enProceso}</span>
-            <span style="color: #10b981;">✓ ${finalizado}</span>
-            <span style="color: #3b82f6;">⏳ ${pendiente}</span>
-          </div>
-          <div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div>
-        </div>
-      `;
+      const marker = L.circleMarker([coord.lat, coord.lng], { radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8 }).addTo(mapRef.current!);
+      const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
       marker.bindPopup(popupHtml);
       marker.on("click", () => setSelectedMina(mina));
       markersRef.current.push(marker);
@@ -229,18 +197,15 @@ export function MapaMinas() {
           </div>
           <div className="relative mb-2">
             <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar mina, OT o cliente..."
-              className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400"
-            />
+            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar mina, OT o cliente..." className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:border-pink-400" />
           </div>
           <div className="space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-gray-600">
-              <Calendar size={10} className="text-gray-400" />
-              <span className="font-semibold">Rango de fechas:</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1 text-[10px] text-gray-600">
+                <Calendar size={10} className="text-gray-400" />
+                <span className="font-semibold">Rango de fechas:</span>
+              </div>
+              <button onClick={handleHoy} className="text-[10px] text-[#E91E63] font-bold hover:underline">Hoy</button>
             </div>
             <div className="flex items-center gap-1">
               <input type="date" value={inputInicio} onChange={(e) => setInputInicio(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
@@ -267,23 +232,9 @@ export function MapaMinas() {
             <div className="p-4 text-center text-xs text-gray-400">No se encontraron minas</div>
           ) : (
             minasFiltradas.map((mina) => (
-              <div
-                key={mina.coord.nombre}
-                onClick={() => zoomToMina(mina)}
-                className={`p-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
-                  selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""
-                }`}
-              >
+              <div key={mina.coord.nombre} onClick={() => zoomToMina(mina)} className={`p-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""}`}>
                 <div className="flex items-center gap-2">
-                  <div
-                    className="w-3 h-3 rounded-full shrink-0"
-                    style={{
-                      backgroundColor: mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b"
-                        : mina.finalizado > 0 ? "#10b981"
-                        : mina.pendiente > 0 ? "#3b82f6"
-                        : "#6b7280"
-                    }}
-                  />
+                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b" : mina.finalizado > 0 ? "#10b981" : mina.pendiente > 0 ? "#3b82f6" : "#6b7280" }} />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
                     <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
@@ -312,9 +263,7 @@ export function MapaMinas() {
                   <div className="text-sm font-bold text-white">{selectedMina.coord.nombre}</div>
                   <div className="text-[10px] text-white/60">📍 {selectedMina.coord.region}</div>
                 </div>
-                <button onClick={() => setSelectedMina(null)} className="text-white/60 hover:text-white p-1">
-                  <X size={16} />
-                </button>
+                <button onClick={() => setSelectedMina(null)} className="text-white/60 hover:text-white p-1"><X size={16} /></button>
               </div>
               <div className="flex-1 overflow-y-auto p-3">
                 <div className="flex gap-3 mb-3 text-xs">
@@ -327,9 +276,7 @@ export function MapaMinas() {
                   const tecnicosMina = getTecnicosEnMina(selectedMina);
                   return (
                     <>
-                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">
-                        Técnicos en proyecto ({tecnicosMina.length}):
-                      </div>
+                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">Técnicos en proyecto ({tecnicosMina.length}):</div>
                       <div className="space-y-1 mb-3">
                         {tecnicosMina.map((t, i) => (
                           <div key={i} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
@@ -342,15 +289,10 @@ export function MapaMinas() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-semibold text-gray-900 truncate">{t.tecnico.nombre}</div>
-                              <div className="text-[10px] text-gray-500 truncate">
-                                {Array.from(t.actividades).join(", ")}
-                              </div>
+                              <div className="text-[10px] text-gray-500 truncate">{Array.from(t.actividades).join(", ")}</div>
                             </div>
                             <div className="text-[10px] text-gray-600 shrink-0 font-medium">
-                              {t.fechaInicio === t.fechaFin 
-                                ? fmtFecha(t.fechaInicio) 
-                                : `${fmtFecha(t.fechaInicio)} → ${fmtFecha(t.fechaFin)}`
-                              }
+                              {t.fechaInicio === t.fechaFin ? fmtFecha(t.fechaInicio) : `${fmtFecha(t.fechaInicio)} → ${fmtFecha(t.fechaFin)}`}
                             </div>
                           </div>
                         ))}
@@ -362,18 +304,14 @@ export function MapaMinas() {
                 <div className="text-[10px] font-bold text-gray-500 uppercase mb-1">OTs en esta mina:</div>
                 <div className="space-y-1">
                   {selectedMina.ots.map((ot) => {
-                    const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700"
-                      : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700"
-                      : "bg-blue-100 text-blue-700";
+                    const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700";
                     return (
                       <div key={ot.codigo} className="p-1.5 rounded border border-gray-200 flex items-center gap-2 hover:bg-gray-50">
                         <div className="text-[10px] font-mono font-bold text-gray-900 w-20">{ot.codigo}</div>
                         <div className="flex-1 min-w-0">
                           <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
                         </div>
-                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>
-                          {ot.estado.slice(0, 3)}
-                        </span>
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>{ot.estado.slice(0, 3)}</span>
                       </div>
                     );
                   })}
@@ -387,32 +325,16 @@ export function MapaMinas() {
                   <Info size={12} className="text-[#E91E63]" />
                   <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
                 </div>
-                <button 
-                  onClick={() => setImgKey(prev => prev + 1)} 
-                  className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200"
-                  title="Recargar imagen"
-                >
+                <button onClick={() => setImgKey(prev => prev + 1)} className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200" title="Recargar imagen">
                   <RefreshCw size={10} />
                 </button>
               </div>
               <div className="h-28 relative overflow-hidden bg-gray-100">
-                <img 
-                  key={`${selectedMina.coord.ciudad}-${imgKey}`}
-                  src={`${selectedMina.coord.foto_ciudad}?t=${imgKey}`} 
-                  alt={selectedMina.coord.ciudad}
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-                <div className="absolute bottom-1 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">
-                  {selectedMina.coord.ciudad}
-                </div>
+                <img key={`${selectedMina.coord.ciudad}-${imgKey}`} src={`${selectedMina.coord.foto_ciudad}?t=${imgKey}`} alt={selectedMina.coord.ciudad} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                <div className="absolute bottom-1 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">{selectedMina.coord.ciudad}</div>
               </div>
               <div className="flex-1 p-3 flex flex-col">
-                <div className="text-[10px] text-gray-600 leading-relaxed flex-1">
-                  {selectedMina.coord.datoCurioso}
-                </div>
+                <div className="text-[10px] text-gray-600 leading-relaxed flex-1">{selectedMina.coord.datoCurioso}</div>
                 <div className="mt-2 pt-2 border-t border-gray-100">
                   <div className="text-[9px] text-gray-400 uppercase tracking-wider">Región</div>
                   <div className="text-[10px] text-gray-700 font-semibold">{selectedMina.coord.region}</div>
