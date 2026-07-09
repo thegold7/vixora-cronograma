@@ -4,12 +4,13 @@
  *   - { accion: "agregar", ... }
  *   - { accion: "eliminar", nombre }
  *   - { accion: "eliminar_ot", codigo }
- *   - { accion: "toggle_visible", codigo, visible }
+ *   - { accion: "toggle_visible", codigo, visible } -> OTs
+ *   - { accion: "toggle_visible_sede", nombre, visible } -> Sedes
  *   - { accion: "actualizar_sede", nombreOriginal, newData }
  *   - { accion: "sincronizar", sedes }
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getSedes, addSede, deleteSede, deleteOt, updateOtVisible, updateSede, replaceAllSedes } from "@/lib/sheets";
+import { getSedes, addSede, deleteSede, deleteOt, updateOtVisible, updateSede, replaceAllSedes, toggleSedeVisible } from "@/lib/sheets";
 import { isEditor } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -82,6 +83,13 @@ export async function POST(req: NextRequest) {
       const { codigo, visible } = body;
       if (!codigo || typeof visible !== "boolean") return NextResponse.json({ ok: false, error: "Faltan campos" }, { status: 400 });
       await updateOtVisible(codigo, visible);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (accion === "toggle_visible_sede") {
+      const { nombre, visible } = body;
+      if (!nombre || typeof visible !== "boolean") return NextResponse.json({ ok: false, error: "Faltan campos" }, { status: 400 });
+      await toggleSedeVisible(nombre, visible);
       return NextResponse.json({ ok: true });
     }
 
