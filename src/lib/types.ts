@@ -12,7 +12,7 @@ export interface Tecnico {
   codigo_sap: string;
   estado: string;
   activo: boolean;
-  foto_url?: string; // URL de foto (opcional, columna nueva)
+  foto_url?: string;
 }
 
 export interface OT {
@@ -24,16 +24,6 @@ export interface OT {
   visible_mapa?: boolean;
 }
 
-// NUEVO: interfaz para Sedes
-export interface Sede {
-  nombre: string;
-  lat: number;
-  lng: number;
-  region: string;
-  ciudad: string;
-  datoCurioso: string;
-  foto_ciudad: string;
-}
 export interface Actividad {
   codigo: string;
   nombre: string;
@@ -84,3 +74,14 @@ export const VIXORA_COLORS = {
 
 export type VistaCalendario = "mes" | "semana" | "año";
 export type ModoAcceso = "lector" | "editor";
+
+export interface Sede {
+  nombre: string;
+  lat: number;
+  lng: number;
+  region: string;
+  ciudad: string;
+  datoCurioso: string;
+  foto_ciudad: string;
+  visible?: boolean; // NUEVO: controla si se muestra en el mapa
+}
