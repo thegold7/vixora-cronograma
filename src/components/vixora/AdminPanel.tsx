@@ -43,7 +43,6 @@ export function AdminPanel() {
 
   const getOtsDeSede = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre);
 
-  // Lógica de filtrado y ordenamiento
   const sedesFiltradas = useMemo(() => {
     let result = sedes.map(s => ({ ...s, otCount: getOtsDeSede(s.nombre).length }));
 
@@ -115,11 +114,23 @@ export function AdminPanel() {
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
-  // NUEVO: Sincronizar TODO al Excel
+  // FIX: Sincronizar TODO (Excel + Predefinidas) sin borrar las custom
   const handleSincronizarTodo = async () => {
-    if (!confirm("¿Sobrescribir TODA la hoja 'Sedes' en Excel con las 30 sedes predefinidas? Esto no afectará las OTs.")) return;
+    if (!confirm("¿Sincronizar todas las sedes al Excel? Se agregarán las 30 predefinidas manteniendo las que ya creaste.")) return;
     try {
-      const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", sedes: MINAS_PERU }) });
+      // 1. Copiar las sedes actuales del Excel
+      const sedesActuales = sedes.map(s => ({ ...s }));
+      
+      // 2. Agregar las predefinidas que no existan ya
+      const nombresActuales = new Set(sedesActuales.map(s => s.nombre.toUpperCase()));
+      MINAS_PERU.forEach(p => {
+        if (!nombresActuales.has(p.nombre.toUpperCase())) {
+          sedesActuales.push({ ...p, visible: true });
+        }
+      });
+
+      // 3. Enviar todo al Excel
+      const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", sedes: sedesActuales }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await fetchAllData(); showToast("Sedes sincronizadas en Excel", "ok");
