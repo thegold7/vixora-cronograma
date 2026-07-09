@@ -2,7 +2,8 @@
 
 import { useStore } from "@/lib/store";
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X } from "lucide-react";
+import { Plus, Trash2, Eye, EyeOff, Building2, Briefcase, Save, MapPin, RefreshCw, Pencil, X, Upload, ChevronDown, ChevronUp, Database } from "lucide-react";
+import { MINAS_PERU } from "@/lib/minasData";
 
 export function AdminPanel() {
   const { cargarDatosSilencioso, showToast } = useStore();
@@ -17,6 +18,7 @@ export function AdminPanel() {
   const [formSede, setFormSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   
   const [tabActivo, setTabActivo] = useState<"ots" | "sedes">("ots");
+  const [sedeExpandida, setSedeExpandida] = useState<string | null>(null);
 
   const fetchAllData = async () => {
     setCargando(true);
@@ -36,9 +38,7 @@ export function AdminPanel() {
     }
   };
 
-  useEffect(() => {
-    fetchAllData();
-  }, []);
+  useEffect(() => { fetchAllData(); }, []);
 
   const resetFormOt = () => {
     setEditandoOt(null);
@@ -62,11 +62,6 @@ export function AdminPanel() {
         });
         const json = await res.json();
         if (!json.ok) throw new Error(json.error);
-        
-        const otOriginal = allOts.find(o => o.codigo === editandoOt);
-        if (otOriginal && (otOriginal.visible_mapa ?? true) !== formData.visible_mapa) {
-          await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "toggle_visible", codigo: formData.codigo, visible: formData.visible_mapa }) });
-        }
         showToast(`OT actualizada`, "ok");
       } else {
         const res = await fetch("/api/ot", {
@@ -168,7 +163,24 @@ export function AdminPanel() {
     }
   };
 
-  const getOtCount = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre).length;
+  const handleSincronizar = async () => {
+    if (!confirm("¿Sobrescribir la hoja 'Sedes' en Excel con las 30 sedes predefinidas?")) return;
+    try {
+      const res = await fetch("/api/sedes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "sincronizar", sedes: MINAS_PERU }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await fetchAllData();
+      showToast("Sedes sincronizadas en Excel", "ok");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Error", "error");
+    }
+  };
+
+  const getOtsDeSede = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre);
 
   return (
     <div className="p-6 max-w-6xl mx-auto overflow-y-auto h-full">
@@ -268,30 +280,64 @@ export function AdminPanel() {
                 <button onClick={handleSubmitSede} className="flex-1 flex items-center justify-center gap-1 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b]"><Save size={14} /> Guardar en Excel</button>
               </div>
             </div>
+
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <button onClick={handleSincronizar} className="w-full flex items-center justify-center gap-1 py-1.5 text-xs text-[#E91E63] border border-[#E91E63] rounded hover:bg-pink-50">
+                <Upload size={14} /> Sincronizar 30 sedes a Excel
+              </button>
+              <p className="text-[9px] text-gray-400 mt-1 text-center">Carga las coordenadas predefinidas en la hoja "Sedes"</p>
+            </div>
           </div>
 
           <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Sedes Existentes ({sedes.length})</h3>
             {cargando ? <p className="text-xs text-gray-400">Cargando...</p> : (
               <div className="space-y-1 max-h-[600px] overflow-y-auto">
-                {sedes.map((sede) => (
-                  <div key={sede.nombre} className="flex items-center gap-2 p-2 border border-gray-100 rounded hover:bg-gray-50">
-                    <MapPin size={16} className="text-[#E91E63] shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-gray-900">{sede.nombre}</div>
-                      <div className="text-[11px] text-gray-600 truncate">{sede.ciudad} · {sede.region} ({sede.lat}, {sede.lng})</div>
+                {sedes.map((sede) => {
+                  const otsDeSede = getOtsDeSede(sede.nombre);
+                  const isExpanded = sedeExpandida === sede.nombre;
+                  return (
+                    <div key={sede.nombre} className="border border-gray-100 rounded">
+                      <div className="flex items-center gap-2 p-2 hover:bg-gray-50">
+                        <MapPin size={16} className="text-[#E91E63] shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-gray-900">{sede.nombre}</div>
+                          <div className="text-[11px] text-gray-600 truncate">{sede.ciudad} · {sede.region}</div>
+                        </div>
+                        <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-medium">{otsDeSede.length} OTs</span>
+                        <button onClick={() => setSedeExpandida(isExpanded ? null : sede.nombre)} className="p-1 text-gray-500 hover:bg-gray-200 rounded">
+                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => handleEditSede(sede)} className="p-1.5 rounded text-blue-600 bg-blue-50 hover:bg-blue-100" title="Editar"><Pencil size={14} /></button>
+                          <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1.5 rounded text-red-600 bg-red-50 hover:bg-red-100" title="Eliminar"><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="bg-gray-50 p-2 border-t border-gray-100">
+                          {otsDeSede.length === 0 ? (
+                            <p className="text-[10px] text-gray-400 text-center py-2">No hay OTs asignadas a esta sede</p>
+                          ) : (
+                            <div className="space-y-1">
+                              {otsDeSede.map(ot => (
+                                <div key={ot.codigo} className="flex items-center gap-2 text-[10px] bg-white p-1.5 rounded border border-gray-100">
+                                  <span className="font-mono font-bold text-gray-900">{ot.codigo}</span>
+                                  <span className="text-gray-600 truncate flex-1">{ot.cliente}</span>
+                                  <span className={`px-1 py-0.5 rounded font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>{ot.estado.slice(0,3)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-medium">{getOtCount(sede.nombre)} OTs</span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => handleEditSede(sede)} className="p-1.5 rounded text-blue-600 bg-blue-50 hover:bg-blue-100" title="Editar"><Pencil size={14} /></button>
-                      <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1.5 rounded text-red-600 bg-red-50 hover:bg-red-100" title="Eliminar"><Trash2 size={14} /></button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {sedes.length === 0 && (
                   <div className="text-center py-8">
-                    <MapPin size={24} className="mx-auto text-gray-300 mb-2" />
-                    <p className="text-xs text-gray-400">No hay sedes en Excel. Agrega la primera usando el formulario de la izquierda.</p>
+                    <Database size={24} className="mx-auto text-gray-300 mb-2" />
+                    <p className="text-xs text-gray-400 mb-2">No hay sedes en Excel.</p>
+                    <button onClick={handleSincronizar} className="text-xs text-[#E91E63] font-medium hover:underline">Sincronizar predefinidas ahora</button>
                   </div>
                 )}
               </div>
