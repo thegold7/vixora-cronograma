@@ -423,7 +423,7 @@ export async function getSedes(): Promise<Sede[]> {
     const sheets = getClient();
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: getSheetId(),
-      range: "Sedes!A2:G",
+      range: "Sedes!A2:H",
     });
     const rows = (res.data.values ?? []) as string[][];
     return rows
@@ -436,6 +436,7 @@ export async function getSedes(): Promise<Sede[]> {
         ciudad: r[4] ?? "",
         datoCurioso: r[5] ?? "",
         foto_ciudad: r[6] ?? "",
+        visible: (r[7] ?? "TRUE").toUpperCase() === "TRUE",
       }));
   } catch {
     return [];
@@ -456,10 +457,10 @@ export async function addSede(sede: {
   if (all.some((s) => s.nombre.toUpperCase() === sede.nombre.toUpperCase())) {
     throw new Error(`Ya existe una sede con nombre ${sede.nombre}`);
   }
-  const values = [[sede.nombre, sede.lat, sede.lng, sede.region, sede.ciudad, sede.datoCurioso, sede.foto_ciudad]];
+  const values = [[sede.nombre, sede.lat, sede.lng, sede.region, sede.ciudad, sede.datoCurioso, sede.foto_ciudad, "TRUE"]];
   await sheets.spreadsheets.values.append({
     spreadsheetId: getSheetId(),
-    range: "Sedes!A:G",
+    range: "Sedes!A:H",
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: { values },
@@ -494,13 +495,29 @@ export async function updateSede(
   return { ok: true };
 }
 
+export async function toggleSedeVisible(nombre: string, visible: boolean): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getSedes();
+  const idx = all.findIndex((s) => s.nombre.toUpperCase() === nombre.toUpperCase());
+  if (idx < 0) throw new Error(`Sede ${nombre} no encontrada`);
+  const rowNumber = idx + 2;
+  const value = visible ? "TRUE" : "FALSE";
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `Sedes!H${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[value]] },
+  });
+  return { ok: true };
+}
+
 export async function deleteSede(nombre: string): Promise<{ ok: true }> {
   const sheets = getClient();
   const all = await getSedes();
   const filtered = all.filter((s) => s.nombre.toUpperCase() !== nombre.toUpperCase());
   
-  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad"]];
-  const rows = filtered.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
+  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad", "visible"]];
+  const rows = filtered.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad, s.visible ? "TRUE" : "FALSE"]);
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
@@ -519,8 +536,8 @@ export async function deleteSede(nombre: string): Promise<{ ok: true }> {
 
 export async function replaceAllSedes(sedes: Sede[]): Promise<{ ok: true }> {
   const sheets = getClient();
-  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad"]];
-  const rows = sedes.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad]);
+  const header = [["nombre", "lat", "lng", "region", "ciudad", "datoCurioso", "foto_ciudad", "visible"]];
+  const rows = sedes.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad, s.visible ? "TRUE" : "FALSE"]);
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
