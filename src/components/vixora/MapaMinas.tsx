@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
-import { findMinaCoord, type MinaCoord } from "@/lib/minasData";
+import { findMinaCoord, MINAS_PERU, type MinaCoord } from "@/lib/minasData";
 import type { OT, Tecnico, Sede } from "@/lib/types";
 import { Search, X, Calendar, Info, RefreshCw, Check } from "lucide-react";
 
@@ -74,38 +74,66 @@ export function MapaMinas() {
     setFechaFin(hoyStr);
   };
 
-  const getCoordDeOt = (ot: OT): MinaCoord | null => {
-    const buscarEn = (texto: string): MinaCoord | null => {
-      if (!texto || !texto.trim()) return null;
-      const textoUpper = texto.toUpperCase().trim();
-      let found = sedesExcel.find(s => s.nombre.toUpperCase() === textoUpper);
-      if (found) return { ...found };
-      found = sedesExcel.find(s => textoUpper.includes(s.nombre.toUpperCase()) || s.nombre.toUpperCase().includes(textoUpper));
-      if (found) return { ...found };
-      return findMinaCoord(texto);
-    };
-    return buscarEn(ot.sede) || buscarEn(ot.cliente);
-  };
+  // FIX: Cargar TODAS las sedes (Excel + Predefinidas)
+  const todasLasSedes = useMemo(() => {
+    const mapaSedes = new Map<string, MinaCoord>();
+    
+    // 1. Predefinidas
+    MINAS_PERU.forEach(s => mapaSedes.set(s.nombre.toUpperCase(), s));
+    
+    // 2. Excel (sobrescribe si hay duplicados)
+    sedesExcel.forEach(s => {
+      mapaSedes.set(s.nombre.toUpperCase(), { 
+        nombre: s.nombre, 
+        lat: s.lat, 
+        lng: s.lng, 
+        region: s.region, 
+        ciudad: s.ciudad, 
+        datoCurioso: s.datoCurioso, 
+        foto_ciudad: s.foto_ciudad 
+      });
+    });
+    
+    return Array.from(mapaSedes.values());
+  }, [sedesExcel]);
 
   const otsValidas = useMemo(() => {
     return ots.filter(o => o.estado !== "PERDIDO" && (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE"));
   }, [ots]);
 
+  // FIX: Iniciar minasAgrupadas con TODAS las sedes, luego agregar OTs
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
+    
+    // Inicializar todas las sedes con 0 OTs
+    for (const sede of todasLasSedes) {
+      grupos[sede.nombre] = { coord: sede, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
+    }
+    
+    // Asignar OTs a las sedes
     for (const ot of otsValidas) {
-      const coord = getCoordDeOt(ot);
+      let coord: MinaCoord | null = null;
+      const buscarEn = (texto: string) => {
+        if (!texto) return null;
+        const textoUpper = texto.toUpperCase().trim();
+        return todasLasSedes.find(s => s.nombre.toUpperCase() === textoUpper || textoUpper.includes(s.nombre.toUpperCase()) || s.nombre.toUpperCase().includes(textoUpper));
+      };
+      
+      coord = buscarEn(ot.sede) || buscarEn(ot.cliente);
       if (!coord) continue;
+      
       const key = coord.nombre;
       if (!grupos[key]) grupos[key] = { coord, ots: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0 };
+      
       grupos[key].ots.push(ot);
       grupos[key].total++;
       if (ot.estado === "EN PROCESO") grupos[key].enProceso++;
       else if (ot.estado === "FINALIZADO") grupos[key].finalizado++;
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
+    
     return Object.values(grupos);
-  }, [otsValidas, sedesExcel]);
+  }, [otsValidas, todasLasSedes]);
 
   const minasFiltradas = useMemo(() => {
     if (!query) return minasAgrupadas;
@@ -156,11 +184,14 @@ export function MapaMinas() {
     markersRef.current = [];
     for (const mina of minasFiltradas) {
       const { coord, enProceso, finalizado, pendiente, total } = mina;
-      let color = "#6b7280";
-      if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b";
-      else if (finalizado > 0) color = "#10b981";
-      else if (pendiente > 0) color = "#3b82f6";
-      const radius = Math.min(8 + total * 2, 25);
+      let color = "#6b7280"; // Gris si tiene 0 OTs
+      if (total > 0) {
+        if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b";
+        else if (finalizado > 0) color = "#10b981";
+        else if (pendiente > 0) color = "#3b82f6";
+      }
+      
+      const radius = total > 0 ? Math.min(8 + total * 2, 25) : 6;
       const marker = L.circleMarker([coord.lat, coord.lng], { radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8 }).addTo(mapRef.current!);
       const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
       marker.bindPopup(popupHtml);
@@ -224,6 +255,7 @@ export function MapaMinas() {
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>En proceso</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>Finalizado</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>Pendiente</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>Sin OTs</span>
           </div>
         </div>
 
@@ -234,7 +266,7 @@ export function MapaMinas() {
             minasFiltradas.map((mina) => (
               <div key={mina.coord.nombre} onClick={() => zoomToMina(mina)} className={`p-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""}`}>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b" : mina.finalizado > 0 ? "#10b981" : mina.pendiente > 0 ? "#3b82f6" : "#6b7280" }} />
+                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: mina.total > 0 ? (mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b" : mina.finalizado > 0 ? "#10b981" : mina.pendiente > 0 ? "#3b82f6" : "#6b7280") : "#d1d5db" }} />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
                     <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
