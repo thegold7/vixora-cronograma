@@ -36,8 +36,8 @@ export function MapaMinas() {
   const [actualizando, setActualizando] = useState(false);
   const [imgKey, setImgKey] = useState(0);
   const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
-  const [ocultarSinOts, setOcultarSinOts] = useState(false); // Cambiado a false para que se vean todas por defecto
   const [otsExpandidas, setOtsExpandidas] = useState(false);
+  const [filtroFechasActivo, setFiltroFechasActivo] = useState(false);
   
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
@@ -68,6 +68,7 @@ export function MapaMinas() {
   const handleAplicarFechas = () => {
     setFechaInicio(inputInicio);
     setFechaFin(inputFin);
+    setFiltroFechasActivo(true);
   };
 
   const handleHoy = () => {
@@ -76,14 +77,41 @@ export function MapaMinas() {
     setInputFin(hoyStr);
     setFechaInicio(hoyStr);
     setFechaFin(hoyStr);
+    setFiltroFechasActivo(true);
   };
 
+  const handleLimpiarFechas = () => {
+    setFiltroFechasActivo(false);
+  };
+
+  // FIX: Crear un mapa de visibilidad desde el Excel
+  const visibilidadSedes = useMemo(() => {
+    const map = new Map<string, boolean>();
+    sedesExcel.forEach(s => {
+      map.set(s.nombre.toUpperCase(), s.visible ?? true);
+    });
+    return map;
+  }, [sedesExcel]);
+
+  // FIX: Cargar sedes respetando visibilidad del Excel
   const todasLasSedes = useMemo(() => {
     const mapaSedes = new Map<string, MinaCoord>();
-    MINAS_PERU.forEach(s => mapaSedes.set(s.nombre.toUpperCase(), s));
+    
+    // Cargar predefinidas
+    MINAS_PERU.forEach(s => {
+      // FIX: Si está en el Excel con visible=FALSE, no cargarla
+      const visibilidad = visibilidadSedes.get(s.nombre.toUpperCase());
+      if (visibilidad === false) return;
+      mapaSedes.set(s.nombre.toUpperCase(), s);
+    });
+    
+    // Cargar del Excel (respetando visible)
     sedesExcel.forEach(s => {
       if (s.visible === false) return;
-      mapaSedes.set(s.nombre.toUpperCase(), { nombre: s.nombre, lat: s.lat, lng: s.lng, region: s.region, ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad });
+      mapaSedes.set(s.nombre.toUpperCase(), { 
+        nombre: s.nombre, lat: s.lat, lng: s.lng, region: s.region, 
+        ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad 
+      });
     });
     
     // Fusionar por coordenadas
@@ -94,20 +122,18 @@ export function MapaMinas() {
     });
     
     return Array.from(porCoord.values());
-  }, [sedesExcel]);
+  }, [sedesExcel, visibilidadSedes]);
 
   const otsValidas = useMemo(() => {
     return ots.filter(o => o.estado !== "PERDIDO" && (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE"));
   }, [ots]);
 
-  // FIX: Calcular qué OTs y sedes tienen actividad en el rango de fechas
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
     for (const sede of todasLasSedes) {
       grupos[sede.nombre] = { coord: sede, ots: [], otsEnRango: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
     }
     
-    // Mapear OTs a sedes
     for (const ot of otsValidas) {
       let coord: MinaCoord | null = null;
       const buscarEn = (texto: string) => {
@@ -126,7 +152,6 @@ export function MapaMinas() {
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
 
-    // Verificar actividad en rango de fechas
     const codigosEnRango = new Set<string>();
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
@@ -143,15 +168,10 @@ export function MapaMinas() {
     return Object.values(grupos);
   }, [otsValidas, todasLasSedes, cronograma, fechaInicio, fechaFin]);
 
-  // FIX: Filtrar puntos del mapa por rango de fechas
   const minasFiltradas = useMemo(() => {
     let result = minasAgrupadas;
-    
-    // Si hay rango de fechas aplicado, ocultar las que no tienen actividad
-    result = result.filter(g => g.hasActividadEnRango);
-    
-    if (ocultarSinOts) {
-      result = result.filter(g => g.total > 0);
+    if (filtroFechasActivo) {
+      result = result.filter(g => g.hasActividadEnRango);
     }
     if (query) {
       const q = query.toLowerCase();
@@ -162,7 +182,7 @@ export function MapaMinas() {
       );
     }
     return result;
-  }, [minasAgrupadas, query, ocultarSinOts]);
+  }, [minasAgrupadas, query, filtroFechasActivo]);
 
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
     const tecnicosMap: Record<string, TecnicoAgrupado> = {};
@@ -191,17 +211,35 @@ export function MapaMinas() {
     return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
-  // NUEVO: Toggle visibilidad de SEDE
-  const handleToggleVisibleSede = async (nombre: string, visible: boolean) => {
+  // FIX: Toggle con actualización inmediata del estado local
+  const handleToggleVisibleSede = async (nombre: string) => {
+    const sedeExcel = sedesExcel.find(s => s.nombre === nombre);
+    const isVisible = sedeExcel ? (sedeExcel.visible ?? true) : true;
+    
+    // Actualizar estado local inmediatamente
+    if (sedeExcel) {
+      setSedesExcel(prev => prev.map(s => 
+        s.nombre === nombre ? { ...s, visible: !isVisible } : s
+      ));
+    }
+    
     try {
-      const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "toggle_visible_sede", nombre, visible: !visible }) });
+      const res = await fetch("/api/sedes", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ accion: "toggle_visible_sede", nombre, visible: !isVisible }) 
+      });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await cargarDatosSilencioso();
-      // Recargar sedes del Excel
-      fetch("/api/sedes", { cache: "no-store" }).then(res => res.json()).then(json => { if (json.ok) setSedesExcel(json.data); });
-      showToast(`Sede ${!visible ? 'visible' : 'oculta'}`, "ok");
+      showToast(`Sede ${!isVisible ? 'visible' : 'oculta'}`, "ok");
     } catch (err) {
+      // Revertir en caso de error
+      if (sedeExcel) {
+        setSedesExcel(prev => prev.map(s => 
+          s.nombre === nombre ? { ...s, visible: isVisible } : s
+        ));
+      }
       showToast(err instanceof Error ? err.message : "Error", "error");
     }
   };
@@ -252,12 +290,6 @@ export function MapaMinas() {
     return `${d}/${m}`;
   };
 
-  // Encontrar la sede en el Excel para saber su estado de visibilidad
-  const getSedeVisibility = (nombre: string) => {
-    const sede = sedesExcel.find(s => s.nombre === nombre);
-    return sede ? (sede.visible ?? true) : true;
-  };
-
   return (
     <div className="flex h-full overflow-hidden">
       <div className="w-72 shrink-0 bg-white border-r border-gray-200 flex flex-col">
@@ -277,7 +309,12 @@ export function MapaMinas() {
               <div className="flex items-center gap-1 text-[10px] text-gray-600">
                 <Calendar size={10} className="text-gray-400" /><span className="font-semibold">Rango de fechas:</span>
               </div>
-              <button onClick={handleHoy} className="text-[10px] text-[#E91E63] font-bold hover:underline">Hoy</button>
+              <div className="flex gap-1">
+                <button onClick={handleHoy} className="text-[10px] text-[#E91E63] font-bold hover:underline">Hoy</button>
+                {filtroFechasActivo && (
+                  <button onClick={handleLimpiarFechas} className="text-[10px] text-gray-500 font-bold hover:underline">Limpiar</button>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-1">
               <input type="date" value={inputInicio} onChange={(e) => setInputInicio(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
@@ -285,10 +322,9 @@ export function MapaMinas() {
               <input type="date" value={inputFin} onChange={(e) => setInputFin(e.target.value)} className="w-full px-1 py-0.5 text-[10px] border border-gray-200 rounded" />
             </div>
             <button onClick={handleAplicarFechas} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white rounded bg-[#E91E63] hover:bg-[#c2185b]"><Check size={10} /> Aplicar fechas</button>
-            <label className="flex items-center gap-1.5 text-[10px] text-gray-600 mt-1 cursor-pointer">
-              <input type="checkbox" checked={ocultarSinOts} onChange={(e) => setOcultarSinOts(e.target.checked)} className="rounded" />
-              Ocultar sedes sin OTs (general)
-            </label>
+            {filtroFechasActivo && (
+              <div className="text-[9px] text-[#E91E63] text-center mt-1">📋 Filtrando por fechas activo</div>
+            )}
           </div>
         </div>
 
@@ -298,35 +334,32 @@ export function MapaMinas() {
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>En proceso</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>Finalizado</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>Pendiente</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>Sin actividad</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>Sin OTs</span>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
           {minasFiltradas.length === 0 ? (
-            <div className="p-4 text-center text-xs text-gray-400">No hay actividad en este rango de fechas</div>
+            <div className="p-4 text-center text-xs text-gray-400">No hay sedes visibles</div>
           ) : (
-            minasFiltradas.map((mina) => {
-              const isVisible = getSedeVisibility(mina.coord.nombre);
-              return (
-                <div key={mina.coord.nombre} className={`p-2 border-b border-gray-100 hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""} ${!isVisible ? 'opacity-50' : ''}`}>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => handleToggleVisibleSede(mina.coord.nombre, isVisible)} className={`p-1 rounded ${isVisible ? "text-green-600 bg-green-50" : "text-gray-400 bg-gray-100"}`} title="Visibilidad sede">
-                      {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-                    </button>
-                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => isVisible && zoomToMina(mina)}>
-                      <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
-                      <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
-                    </div>
-                    <div className="text-xs font-bold text-gray-700">{mina.otsEnRango.length}</div>
+            minasFiltradas.map((mina) => (
+              <div key={mina.coord.nombre} onClick={() => zoomToMina(mina)} className={`p-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""}`}>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: mina.total > 0 ? (mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b" : mina.finalizado > 0 ? "#10b981" : mina.pendiente > 0 ? "#3b82f6" : "#6b7280") : "#d1d5db" }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
+                    <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
+                  </div>
+                  <div className="text-xs font-bold text-gray-700">
+                    {filtroFechasActivo ? mina.otsEnRango.length : mina.total}
                   </div>
                 </div>
-              );
-            })
+              </div>
+            ))
           )}
         </div>
         <div className="p-2 border-t border-gray-200 bg-white text-[10px] text-gray-400 text-center shrink-0">
-          {minasFiltradas.length} mina(s) activas en rango
+          {minasFiltradas.length} sede(s) · {filtroFechasActivo ? "Filtrado por fechas" : "Todas las sedes"}
         </div>
       </div>
 
@@ -344,8 +377,12 @@ export function MapaMinas() {
                   <div className="text-[10px] text-white/60">📍 {selectedMina.coord.region}</div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => handleToggleVisibleSede(selectedMina.coord.nombre, getSedeVisibility(selectedMina.coord.nombre))} className={`p-1 rounded ${getSedeVisibility(selectedMina.coord.nombre) ? "text-green-400 bg-green-900/30" : "text-gray-500 bg-gray-800"}`} title="Visibilidad sede">
-                    {getSedeVisibility(selectedMina.coord.nombre) ? <Eye size={14} /> : <EyeOff size={14} />}
+                  <button onClick={() => handleToggleVisibleSede(selectedMina.coord.nombre)} className="p-1 text-white/60 hover:text-white" title="Ocultar/Mostrar sede">
+                    {(() => {
+                      const sedeExcel = sedesExcel.find(s => s.nombre === selectedMina.coord.nombre);
+                      const isVisible = sedeExcel ? (sedeExcel.visible ?? true) : true;
+                      return isVisible ? <Eye size={14} /> : <EyeOff size={14} />;
+                    })()}
                   </button>
                   <button onClick={() => setSelectedMina(null)} className="text-white/60 hover:text-white p-1"><X size={16} /></button>
                 </div>
@@ -362,9 +399,11 @@ export function MapaMinas() {
                   const tecnicosMina = getTecnicosEnMina(selectedMina);
                   return (
                     <>
-                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">Técnicos en rango ({tecnicosMina.length}):</div>
+                      <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">
+                        Técnicos en sede dentro de las fechas ({tecnicosMina.length}):
+                      </div>
                       <div className="space-y-1 mb-3">
-                        {tecnicosMina.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay técnicos en este rango de fechas</p>}
+                        {tecnicosMina.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay técnicos en estas fechas</p>}
                         {tecnicosMina.map((t, i) => (
                           <div key={i} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
                             <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
@@ -389,14 +428,14 @@ export function MapaMinas() {
                 })()}
 
                 <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center justify-between">
-                  <span>OTs en rango ({selectedMina.otsEnRango.length}):</span>
+                  <span>OTs asociadas a la sede ({selectedMina.otsEnRango.length} en fechas):</span>
                   <button onClick={() => setOtsExpandidas(!otsExpandidas)} className="p-0.5 hover:bg-gray-200 rounded">
                     {otsExpandidas ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                   </button>
                 </div>
                 {otsExpandidas && (
                   <div className="space-y-1">
-                    {selectedMina.otsEnRango.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay OTs en este rango de fechas</p>}
+                    {selectedMina.otsEnRango.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay OTs en estas fechas</p>}
                     {selectedMina.otsEnRango.map((ot) => {
                       const color = ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700";
                       return (
