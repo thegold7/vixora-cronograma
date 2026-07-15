@@ -9,7 +9,7 @@ import type { OT, Tecnico, Sede } from "@/lib/types";
 import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
 
 interface MinaAgrupada {
-  coord: MinaCoord;
+  coord: MinaCoord & { visible?: boolean };
   ots: OT[];
   otsEnRango: OT[];
   enProceso: number;
@@ -38,6 +38,7 @@ export function MapaMinas() {
   const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
   const [otsExpandidas, setOtsExpandidas] = useState(false);
   const [filtroFechasActivo, setFiltroFechasActivo] = useState(false);
+  const [ocultarSinOts, setOcultarSinOts] = useState(false); // NUEVO
   
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
@@ -84,45 +85,37 @@ export function MapaMinas() {
     setFiltroFechasActivo(false);
   };
 
-  // FIX: Crear un mapa de visibilidad desde el Excel
-  const visibilidadSedes = useMemo(() => {
-    const map = new Map<string, boolean>();
-    sedesExcel.forEach(s => {
-      map.set(s.nombre.toUpperCase(), s.visible ?? true);
-    });
-    return map;
-  }, [sedesExcel]);
-
-  // FIX: Cargar sedes respetando visibilidad del Excel
+  // FIX: Cargar todas las sedes y mezclar visibilidad del Excel
   const todasLasSedes = useMemo(() => {
-    const mapaSedes = new Map<string, MinaCoord>();
+    const mapaSedes = new Map<string, MinaCoord & { visible?: boolean }>();
     
-    // Cargar predefinidas
     MINAS_PERU.forEach(s => {
-      // FIX: Si está en el Excel con visible=FALSE, no cargarla
-      const visibilidad = visibilidadSedes.get(s.nombre.toUpperCase());
-      if (visibilidad === false) return;
-      mapaSedes.set(s.nombre.toUpperCase(), s);
+      const excelSede = sedesExcel.find(e => e.nombre.toUpperCase() === s.nombre.toUpperCase());
+      mapaSedes.set(s.nombre.toUpperCase(), { ...s, visible: excelSede ? excelSede.visible : true });
     });
     
-    // Cargar del Excel (respetando visible)
     sedesExcel.forEach(s => {
-      if (s.visible === false) return;
       mapaSedes.set(s.nombre.toUpperCase(), { 
         nombre: s.nombre, lat: s.lat, lng: s.lng, region: s.region, 
-        ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad 
+        ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad,
+        visible: s.visible ?? true
       });
     });
     
     // Fusionar por coordenadas
-    const porCoord = new Map<string, MinaCoord>();
+    const porCoord = new Map<string, MinaCoord & { visible?: boolean }>();
     Array.from(mapaSedes.values()).forEach(s => {
       const key = `${s.lat.toFixed(4)},${s.lng.toFixed(4)}`;
-      if (!porCoord.has(key)) porCoord.set(key, s);
+      if (!porCoord.has(key)) {
+        porCoord.set(key, s);
+      } else {
+        const existing = porCoord.get(key)!;
+        existing.visible = existing.visible || (s.visible ?? true);
+      }
     });
     
     return Array.from(porCoord.values());
-  }, [sedesExcel, visibilidadSedes]);
+  }, [sedesExcel]);
 
   const otsValidas = useMemo(() => {
     return ots.filter(o => o.estado !== "PERDIDO" && (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE"));
@@ -135,7 +128,7 @@ export function MapaMinas() {
     }
     
     for (const ot of otsValidas) {
-      let coord: MinaCoord | null = null;
+      let coord: (MinaCoord & { visible?: boolean }) | null = null;
       const buscarEn = (texto: string) => {
         if (!texto) return null;
         const textoUpper = texto.toUpperCase().trim();
@@ -168,8 +161,12 @@ export function MapaMinas() {
     return Object.values(grupos);
   }, [otsValidas, todasLasSedes, cronograma, fechaInicio, fechaFin]);
 
-  const minasFiltradas = useMemo(() => {
+  // FIX: Lista filtra por query, fechas y ocultarSinOts
+  const minasFiltradasLista = useMemo(() => {
     let result = minasAgrupadas;
+    if (ocultarSinOts) {
+      result = result.filter(g => g.total > 0);
+    }
     if (filtroFechasActivo) {
       result = result.filter(g => g.hasActividadEnRango);
     }
@@ -182,7 +179,12 @@ export function MapaMinas() {
       );
     }
     return result;
-  }, [minasAgrupadas, query, filtroFechasActivo]);
+  }, [minasAgrupadas, query, filtroFechasActivo, ocultarSinOts]);
+
+  // FIX: Mapa filtra además las que tienen visible=false
+  const minasParaMapa = useMemo(() => {
+    return minasFiltradasLista.filter(g => g.coord.visible !== false);
+  }, [minasFiltradasLista]);
 
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
     const tecnicosMap: Record<string, TecnicoAgrupado> = {};
@@ -211,16 +213,20 @@ export function MapaMinas() {
     return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
-  // FIX: Toggle con actualización inmediata del estado local
   const handleToggleVisibleSede = async (nombre: string) => {
     const sedeExcel = sedesExcel.find(s => s.nombre === nombre);
     const isVisible = sedeExcel ? (sedeExcel.visible ?? true) : true;
     
-    // Actualizar estado local inmediatamente
     if (sedeExcel) {
       setSedesExcel(prev => prev.map(s => 
         s.nombre === nombre ? { ...s, visible: !isVisible } : s
       ));
+    } else {
+      // Si es predefinida, la agregamos al Excel con visible=false
+      const sedePredef = MINAS_PERU.find(s => s.nombre === nombre);
+      if (sedePredef) {
+        setSedesExcel(prev => [...prev, { ...sedePredef, visible: false }]);
+      }
     }
     
     try {
@@ -234,7 +240,7 @@ export function MapaMinas() {
       await cargarDatosSilencioso();
       showToast(`Sede ${!isVisible ? 'visible' : 'oculta'}`, "ok");
     } catch (err) {
-      // Revertir en caso de error
+      // Revertir
       if (sedeExcel) {
         setSedesExcel(prev => prev.map(s => 
           s.nombre === nombre ? { ...s, visible: isVisible } : s
@@ -252,11 +258,12 @@ export function MapaMinas() {
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
+  // FIX: Usar minasParaMapa
   useEffect(() => {
     if (!mapRef.current) return;
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
-    for (const mina of minasFiltradas) {
+    for (const mina of minasParaMapa) {
       const { coord, enProceso, finalizado, pendiente, total } = mina;
       let color = "#6b7280";
       if (total > 0) {
@@ -271,7 +278,7 @@ export function MapaMinas() {
       marker.on("click", () => { setSelectedMina(mina); setOtsExpandidas(false); });
       markersRef.current.push(marker);
     }
-  }, [minasFiltradas]);
+  }, [minasParaMapa]);
 
   const zoomToMina = (mina: MinaAgrupada) => {
     if (!mapRef.current) return;
@@ -325,6 +332,11 @@ export function MapaMinas() {
             {filtroFechasActivo && (
               <div className="text-[9px] text-[#E91E63] text-center mt-1">📋 Filtrando por fechas activo</div>
             )}
+            {/* NUEVO: Checkbox ocultar sin OTs */}
+            <label className="flex items-center gap-1.5 text-[10px] text-gray-600 mt-1 cursor-pointer">
+              <input type="checkbox" checked={ocultarSinOts} onChange={(e) => setOcultarSinOts(e.target.checked)} className="rounded" />
+              Ocultar sedes sin OTs
+            </label>
           </div>
         </div>
 
@@ -338,28 +350,38 @@ export function MapaMinas() {
           </div>
         </div>
 
+        {/* FIX: Lista con ojo para ocultar del mapa */}
         <div className="flex-1 overflow-y-auto">
-          {minasFiltradas.length === 0 ? (
-            <div className="p-4 text-center text-xs text-gray-400">No hay sedes visibles</div>
+          {minasFiltradasLista.length === 0 ? (
+            <div className="p-4 text-center text-xs text-gray-400">No hay sedes que coincidan</div>
           ) : (
-            minasFiltradas.map((mina) => (
-              <div key={mina.coord.nombre} onClick={() => zoomToMina(mina)} className={`p-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""}`}>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: mina.total > 0 ? (mina.enProceso > 0 && mina.enProceso >= mina.finalizado ? "#f59e0b" : mina.finalizado > 0 ? "#10b981" : mina.pendiente > 0 ? "#3b82f6" : "#6b7280") : "#d1d5db" }} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
-                    <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
-                  </div>
-                  <div className="text-xs font-bold text-gray-700">
-                    {filtroFechasActivo ? mina.otsEnRango.length : mina.total}
+            minasFiltradasLista.map((mina) => {
+              const isVisible = mina.coord.visible !== false;
+              return (
+                <div key={mina.coord.nombre} className={`p-2 border-b border-gray-100 hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""} ${!isVisible ? 'opacity-50' : ''}`}>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleToggleVisibleSede(mina.coord.nombre); }} 
+                      className={`p-0.5 rounded ${isVisible ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`}
+                      title={isVisible ? "Ocultar del mapa" : "Mostrar en mapa"}
+                    >
+                      {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+                    </button>
+                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => isVisible && zoomToMina(mina)}>
+                      <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
+                      <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
+                    </div>
+                    <div className="text-xs font-bold text-gray-700">
+                      {filtroFechasActivo ? mina.otsEnRango.length : mina.total}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
         <div className="p-2 border-t border-gray-200 bg-white text-[10px] text-gray-400 text-center shrink-0">
-          {minasFiltradas.length} sede(s) · {filtroFechasActivo ? "Filtrado por fechas" : "Todas las sedes"}
+          {minasFiltradasLista.length} sede(s) en lista · {minasParaMapa.length} en mapa
         </div>
       </div>
 
@@ -378,11 +400,7 @@ export function MapaMinas() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => handleToggleVisibleSede(selectedMina.coord.nombre)} className="p-1 text-white/60 hover:text-white" title="Ocultar/Mostrar sede">
-                    {(() => {
-                      const sedeExcel = sedesExcel.find(s => s.nombre === selectedMina.coord.nombre);
-                      const isVisible = sedeExcel ? (sedeExcel.visible ?? true) : true;
-                      return isVisible ? <Eye size={14} /> : <EyeOff size={14} />;
-                    })()}
+                    {selectedMina.coord.visible !== false ? <Eye size={14} /> : <EyeOff size={14} />}
                   </button>
                   <button onClick={() => setSelectedMina(null)} className="text-white/60 hover:text-white p-1"><X size={16} /></button>
                 </div>
@@ -459,25 +477,4 @@ export function MapaMinas() {
                   <Info size={12} className="text-[#E91E63]" />
                   <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
                 </div>
-                <button onClick={() => setImgKey(prev => prev + 1)} className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200" title="Recargar imagen">
-                  <RefreshCw size={10} />
-                </button>
-              </div>
-              <div className="h-28 relative overflow-hidden bg-gray-100">
-                <img key={`${selectedMina.coord.ciudad}-${imgKey}`} src={`${selectedMina.coord.foto_ciudad}?t=${imgKey}`} alt={selectedMina.coord.ciudad} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                <div className="absolute bottom-1 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">{selectedMina.coord.ciudad}</div>
-              </div>
-              <div className="flex-1 p-3 flex flex-col">
-                <div className="text-[10px] text-gray-600 leading-relaxed flex-1">{selectedMina.coord.datoCurioso}</div>
-                <div className="mt-2 pt-2 border-t border-gray-100">
-                  <div className="text-[9px] text-gray-400 uppercase tracking-wider">Región</div>
-                  <div className="text-[10px] text-gray-700 font-semibold">{selectedMina.coord.region}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+                <button onClick={() => setImgKey(prev => prev + 1)} className="p-1 text-gray-500 hover:text-[#E91E63] rounded
