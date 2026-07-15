@@ -2,7 +2,7 @@
 
 import { useStore } from "@/lib/store";
 import { useState, useEffect, useMemo } from "react";
-import { Plus, Trash2, Save, MapPin, RefreshCw, Pencil, X, ChevronDown, ChevronUp, Building2, Upload, Search, ArrowUpDown } from "lucide-react";
+import { Plus, Trash2, Save, MapPin, RefreshCw, Pencil, X, ChevronDown, ChevronUp, Building2, Upload, Search, AlertCircle } from "lucide-react";
 import { MINAS_PERU } from "@/lib/minasData";
 
 export function AdminPanel() {
@@ -18,6 +18,7 @@ export function AdminPanel() {
   const [formSede, setFormSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   
   const [sedeExpandida, setSedeExpandida] = useState<string | null>(null);
+  const [expandirTodo, setExpandirTodo] = useState(false);
   const [query, setQuery] = useState("");
   const [filtroOts, setFiltroOts] = useState<"todas" | "conOts" | "sinOts" | "masOts" | "menosOts">("todas");
 
@@ -42,7 +43,11 @@ export function AdminPanel() {
   useEffect(() => { fetchAllData(); }, []);
 
   const getOtsDeSede = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre);
+  
+  // FIX: OTs sin sede asignada
+  const otsSinSede = useMemo(() => allOts.filter(ot => !ot.sede || ot.sede.trim() === ""), [allOts]);
 
+  // FIX: Búsqueda incluye OTs por código
   const sedesFiltradas = useMemo(() => {
     let result = sedes.map(s => ({ ...s, otCount: getOtsDeSede(s.nombre).length }));
 
@@ -51,7 +56,8 @@ export function AdminPanel() {
       result = result.filter(s => 
         s.nombre.toLowerCase().includes(q) || 
         s.ciudad.toLowerCase().includes(q) || 
-        s.region.toLowerCase().includes(q)
+        s.region.toLowerCase().includes(q) ||
+        getOtsDeSede(s.nombre).some(ot => ot.codigo.toLowerCase().includes(q) || ot.cliente.toLowerCase().includes(q))
       );
     }
 
@@ -64,6 +70,21 @@ export function AdminPanel() {
 
     return result;
   }, [sedes, allOts, query, filtroOts]);
+
+  // FIX: Si hay búsqueda por OT, expandir automáticamente la sede que la contiene
+  useEffect(() => {
+    if (query && query.length > 2) {
+      const sedeConOt = sedes.find(s => 
+        getOtsDeSede(s.nombre).some(ot => 
+          ot.codigo.toLowerCase().includes(query.toLowerCase()) || 
+          ot.cliente.toLowerCase().includes(query.toLowerCase())
+        )
+      );
+      if (sedeConOt) {
+        setSedeExpandida(sedeConOt.nombre);
+      }
+    }
+  }, [query, sedes, allOts]);
 
   // === Handlers ===
   const resetFormOt = () => { setEditandoTipo(null); setEditandoId(null); setFormOt({ codigo: "", cliente: "", sede: "", estado: "EN PROCESO" }); };
@@ -114,28 +135,24 @@ export function AdminPanel() {
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
-  // FIX: Sincronizar TODO (Excel + Predefinidas) sin borrar las custom
   const handleSincronizarTodo = async () => {
     if (!confirm("¿Sincronizar todas las sedes al Excel? Se agregarán las 30 predefinidas manteniendo las que ya creaste.")) return;
     try {
-      // 1. Copiar las sedes actuales del Excel
       const sedesActuales = sedes.map(s => ({ ...s }));
-      
-      // 2. Agregar las predefinidas que no existan ya
       const nombresActuales = new Set(sedesActuales.map(s => s.nombre.toUpperCase()));
       MINAS_PERU.forEach(p => {
         if (!nombresActuales.has(p.nombre.toUpperCase())) {
           sedesActuales.push({ ...p, visible: true });
         }
       });
-
-      // 3. Enviar todo al Excel
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", sedes: sedesActuales }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await fetchAllData(); showToast("Sedes sincronizadas en Excel", "ok");
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
+
+  const isExpanded = (sedeNombre: string) => expandirTodo || sedeExpandida === sedeNombre;
 
   return (
     <div className="p-6 max-w-7xl mx-auto overflow-y-auto h-full">
@@ -154,7 +171,6 @@ export function AdminPanel() {
         </div>
       </div>
 
-      {/* Formulario flotante */}
       {editandoTipo && (
         <div className="mb-6 bg-white border-2 border-[#E91E63] rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
@@ -197,7 +213,6 @@ export function AdminPanel() {
         </div>
       )}
 
-      {/* Botones de agregar */}
       <div className="flex gap-2 mb-4">
         <button onClick={() => { resetFormSede(); setEditandoTipo("sede"); }} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-gray-300 rounded text-gray-700 hover:bg-gray-50">
           <Building2 size={14} /> Nueva Sede
@@ -207,11 +222,11 @@ export function AdminPanel() {
         </button>
       </div>
 
-      {/* Filtros y Búsqueda */}
-      <div className="flex gap-2 mb-4 items-center">
-        <div className="relative flex-1">
+      {/* Filtros */}
+      <div className="flex gap-2 mb-4 items-center flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar sede o ciudad..." className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded" />
+          <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar sede, ciudad o código OT..." className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded" />
         </div>
         <select value={filtroOts} onChange={(e) => setFiltroOts(e.target.value as any)} className="px-2 py-1.5 text-xs border border-gray-200 rounded bg-white">
           <option value="todas">Todas las sedes</option>
@@ -220,9 +235,14 @@ export function AdminPanel() {
           <option value="masOts">Con más OTs</option>
           <option value="menosOts">Con menos OTs</option>
         </select>
+        {/* FIX: Botón Expandir todo */}
+        <button onClick={() => setExpandirTodo(!expandirTodo)} className={`flex items-center gap-1 px-3 py-1.5 text-xs border rounded ${expandirTodo ? "bg-[#E91E63] text-white border-[#E91E63]" : "border-gray-300 text-gray-700 hover:bg-gray-50"}`}>
+          {expandirTodo ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {expandirTodo ? "Contraer todo" : "Expandir todo"}
+        </button>
       </div>
 
-      {/* Tabla unificada */}
+      {/* Tabla */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -241,54 +261,93 @@ export function AdminPanel() {
               {cargando ? (
                 <tr><td colSpan={7} className="text-center py-4 text-gray-400">Cargando...</td></tr>
               ) : (
-                sedesFiltradas.map((sede) => {
-                  const otsDeSede = getOtsDeSede(sede.nombre);
-                  const isExpanded = sedeExpandida === sede.nombre;
-                  return (
+                <>
+                  {sedesFiltradas.map((sede) => {
+                    const otsDeSede = getOtsDeSede(sede.nombre);
+                    const expanded = isExpanded(sede.nombre);
+                    return (
+                      <>
+                        <tr key={sede.nombre} className="border-b border-gray-200 hover:bg-gray-50 font-medium">
+                          <td className="px-3 py-2">
+                            <button onClick={() => setSedeExpandida(expanded && !expandirTodo ? null : sede.nombre)} className="p-0.5 hover:bg-gray-200 rounded">
+                              {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                            </button>
+                          </td>
+                          <td className="px-3 py-2 text-gray-900"><span className="flex items-center gap-1"><MapPin size={12} className="text-[#E91E63]" /> {sede.nombre}</span></td>
+                          <td className="px-3 py-2 text-gray-600">{sede.region}</td>
+                          <td className="px-3 py-2 text-gray-500 text-[10px]">{sede.lat}, {sede.lng}</td>
+                          <td className="px-3 py-2 text-gray-500">{sede.ciudad}</td>
+                          <td className="px-3 py-2 text-center"><span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-medium">{otsDeSede.length}</span></td>
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            <button onClick={() => handleEditSede(sede)} className="p-1 rounded text-blue-600 hover:bg-blue-100"><Pencil size={14} /></button>
+                            <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1"><Trash2 size={14} /></button>
+                          </td>
+                        </tr>
+                        {expanded && (
+                          <>
+                            {otsDeSede.length === 0 ? (
+                              <tr className="bg-gray-50"><td colSpan={7} className="px-8 py-2 text-[10px] text-gray-400 italic">No hay OTs asignadas a esta sede</td></tr>
+                            ) : (
+                              otsDeSede.map(ot => (
+                                <tr key={ot.codigo} className="bg-gray-50 border-b border-gray-100">
+                                  <td className="px-3 py-1.5"></td>
+                                  <td className="px-3 py-1.5 font-mono text-[10px] text-gray-700 pl-8">↳ {ot.codigo}</td>
+                                  <td className="px-3 py-1.5 text-gray-600 text-[10px]">{ot.cliente}</td>
+                                  <td className="px-3 py-1.5 text-gray-400 text-[10px]">—</td>
+                                  <td className="px-3 py-1.5">
+                                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>{ot.estado}</span>
+                                  </td>
+                                  <td className="px-3 py-1.5"></td>
+                                  <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                                    <button onClick={() => handleEditOt(ot)} className="p-1 rounded text-blue-600 hover:bg-blue-100"><Pencil size={12} /></button>
+                                    <button onClick={() => handleDeleteOt(ot.codigo)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1"><Trash2 size={12} /></button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </>
+                        )}
+                      </>
+                    );
+                  })}
+                  
+                  {/* FIX: Fila de OTs sin sede */}
+                  {otsSinSede.length > 0 && (
                     <>
-                      <tr key={sede.nombre} className="border-b border-gray-200 hover:bg-gray-50 font-medium">
+                      <tr className="border-b border-gray-200 hover:bg-gray-50 font-medium bg-orange-50">
                         <td className="px-3 py-2">
-                          <button onClick={() => setSedeExpandida(isExpanded ? null : sede.nombre)} className="p-0.5 hover:bg-gray-200 rounded">
-                            {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          <button onClick={() => setSedeExpandida(sedeExpandida === "__sin_sede__" ? null : "__sin_sede__")} className="p-0.5 hover:bg-gray-200 rounded">
+                            {sedeExpandida === "__sin_sede__" ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                           </button>
                         </td>
-                        <td className="px-3 py-2 text-gray-900"><span className="flex items-center gap-1"><MapPin size={12} className="text-[#E91E63]" /> {sede.nombre}</span></td>
-                        <td className="px-3 py-2 text-gray-600">{sede.region}</td>
-                        <td className="px-3 py-2 text-gray-500 text-[10px]">{sede.lat}, {sede.lng}</td>
-                        <td className="px-3 py-2 text-gray-500">{sede.ciudad}</td>
-                        <td className="px-3 py-2 text-center"><span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-medium">{otsDeSede.length}</span></td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">
-                          <button onClick={() => handleEditSede(sede)} className="p-1 rounded text-blue-600 hover:bg-blue-100"><Pencil size={14} /></button>
-                          <button onClick={() => handleDeleteSede(sede.nombre)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1"><Trash2 size={14} /></button>
-                        </td>
+                        <td className="px-3 py-2 text-gray-900"><span className="flex items-center gap-1"><AlertCircle size={12} className="text-orange-500" /> Sin sede asignada</span></td>
+                        <td className="px-3 py-2 text-gray-400">—</td>
+                        <td className="px-3 py-2 text-gray-400 text-[10px]">—</td>
+                        <td className="px-3 py-2 text-gray-400">—</td>
+                        <td className="px-3 py-2 text-center"><span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">{otsSinSede.length}</span></td>
+                        <td className="px-3 py-2"></td>
                       </tr>
-                      {isExpanded && (
-                        <>
-                          {otsDeSede.length === 0 ? (
-                            <tr className="bg-gray-50"><td colSpan={7} className="px-8 py-2 text-[10px] text-gray-400 italic">No hay OTs asignadas a esta sede</td></tr>
-                          ) : (
-                            otsDeSede.map(ot => (
-                              <tr key={ot.codigo} className="bg-gray-50 border-b border-gray-100">
-                                <td className="px-3 py-1.5"></td>
-                                <td className="px-3 py-1.5 font-mono text-[10px] text-gray-700 pl-8">↳ {ot.codigo}</td>
-                                <td className="px-3 py-1.5 text-gray-600 text-[10px]">{ot.cliente}</td>
-                                <td className="px-3 py-1.5 text-gray-400 text-[10px]">—</td>
-                                <td className="px-3 py-1.5">
-                                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>{ot.estado}</span>
-                                </td>
-                                <td className="px-3 py-1.5"></td>
-                                <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                                  <button onClick={() => handleEditOt(ot)} className="p-1 rounded text-blue-600 hover:bg-blue-100"><Pencil size={12} /></button>
-                                  <button onClick={() => handleDeleteOt(ot.codigo)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1"><Trash2 size={12} /></button>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </>
+                      {(sedeExpandida === "__sin_sede__" || expandirTodo) && (
+                        otsSinSede.map(ot => (
+                          <tr key={ot.codigo} className="bg-orange-50/50 border-b border-gray-100">
+                            <td className="px-3 py-1.5"></td>
+                            <td className="px-3 py-1.5 font-mono text-[10px] text-gray-700 pl-8">↳ {ot.codigo}</td>
+                            <td className="px-3 py-1.5 text-gray-600 text-[10px]">{ot.cliente}</td>
+                            <td className="px-3 py-1.5 text-gray-400 text-[10px]">—</td>
+                            <td className="px-3 py-1.5">
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>{ot.estado}</span>
+                            </td>
+                            <td className="px-3 py-1.5"></td>
+                            <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                              <button onClick={() => handleEditOt(ot)} className="p-1 rounded text-blue-600 hover:bg-blue-100"><Pencil size={12} /></button>
+                              <button onClick={() => handleDeleteOt(ot.codigo)} className="p-1 rounded text-red-600 hover:bg-red-100 ml-1"><Trash2 size={12} /></button>
+                            </td>
+                          </tr>
+                        ))
                       )}
                     </>
-                  );
-                })
+                  )}
+                </>
               )}
             </tbody>
           </table>
