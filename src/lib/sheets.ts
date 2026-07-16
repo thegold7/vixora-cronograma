@@ -314,9 +314,10 @@ export async function updateOtEstado(
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(),
-    range: `OTs!D${rowNumber}:E${rowNumber}`,
+    range: `OTs!D${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[estadoUpper, activo]] },
+    // FIX: preservar visible_mapa (columna F).
+    requestBody: { values: [[estadoUpper, activo, all[idx].visible_mapa !== false ? "TRUE" : "FALSE"]] },
   });
   return { ok: true };
 }
@@ -358,7 +359,7 @@ export async function updateOt(
   const all = await getOTs();
   const idx = all.findIndex((o) => o.codigo === codigoOriginal);
   if (idx < 0) throw new Error(`OT ${codigoOriginal} no encontrada`);
-  
+
   if (nuevoCodigo !== codigoOriginal && all.some(o => o.codigo === nuevoCodigo)) {
     throw new Error(`Ya existe una OT con código ${nuevoCodigo}`);
   }
@@ -366,12 +367,14 @@ export async function updateOt(
   const rowNumber = idx + 2;
   const estadoUpper = estado.toUpperCase();
   const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
+  // FIX: preservar visible_mapa (columna F). Si no había, default TRUE.
+  const visibleActual = all[idx].visible_mapa !== false ? "TRUE" : "FALSE";
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(),
-    range: `OTs!A${rowNumber}:E${rowNumber}`,
+    range: `OTs!A${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[nuevoCodigo, cliente, sede, estadoUpper, activo]] },
+    requestBody: { values: [[nuevoCodigo, cliente, sede, estadoUpper, activo, visibleActual]] },
   });
   return { ok: true };
 }
