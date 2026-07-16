@@ -38,8 +38,8 @@ export function MapaMinas() {
   const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
   const [otsExpandidas, setOtsExpandidas] = useState(false);
   const [filtroFechasActivo, setFiltroFechasActivo] = useState(false);
-  const [ocultarSinOts, setOcultarSinOts] = useState(false); // NUEVO
-  
+  const [ocultarSinOts, setOcultarSinOts] = useState(false);
+
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [inputFin, setInputFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
@@ -85,56 +85,91 @@ export function MapaMinas() {
     setFiltroFechasActivo(false);
   };
 
-  // FIX: Cargar todas las sedes y mezclar visibilidad del Excel
+  // FIX: Cargar todas las sedes y mezclar visibilidad del Excel.
+  // NO se fusionan por coordenadas: cada sede es independiente.
   const todasLasSedes = useMemo(() => {
     const mapaSedes = new Map<string, MinaCoord & { visible?: boolean }>();
-    
+
     MINAS_PERU.forEach(s => {
       const excelSede = sedesExcel.find(e => e.nombre.toUpperCase() === s.nombre.toUpperCase());
-      mapaSedes.set(s.nombre.toUpperCase(), { ...s, visible: excelSede ? excelSede.visible : true });
-    });
-    
-    sedesExcel.forEach(s => {
-      mapaSedes.set(s.nombre.toUpperCase(), { 
-        nombre: s.nombre, lat: s.lat, lng: s.lng, region: s.region, 
-        ciudad: s.ciudad, datoCurioso: s.datoCurioso, foto_ciudad: s.foto_ciudad,
-        visible: s.visible ?? true
+      mapaSedes.set(s.nombre.toUpperCase(), {
+        ...s,
+        visible: excelSede ? excelSede.visible : true,
       });
     });
-    
-    // Fusionar por coordenadas
-    const porCoord = new Map<string, MinaCoord & { visible?: boolean }>();
-    Array.from(mapaSedes.values()).forEach(s => {
-      const key = `${s.lat.toFixed(4)},${s.lng.toFixed(4)}`;
-      if (!porCoord.has(key)) {
-        porCoord.set(key, s);
+
+    sedesExcel.forEach(s => {
+      if (!mapaSedes.has(s.nombre.toUpperCase())) {
+        mapaSedes.set(s.nombre.toUpperCase(), {
+          nombre: s.nombre,
+          lat: s.lat,
+          lng: s.lng,
+          region: s.region,
+          ciudad: s.ciudad,
+          datoCurioso: s.datoCurioso,
+          foto_ciudad: s.foto_ciudad,
+          visible: s.visible ?? true,
+        });
       } else {
-        const existing = porCoord.get(key)!;
-        existing.visible = existing.visible || (s.visible ?? true);
+        const existing = mapaSedes.get(s.nombre.toUpperCase())!;
+        existing.visible = s.visible ?? true;
       }
     });
-    
-    return Array.from(porCoord.values());
+
+    return Array.from(mapaSedes.values());
   }, [sedesExcel]);
 
+  // FIX: Respetar visible_mapa de cada OT.
   const otsValidas = useMemo(() => {
-    return ots.filter(o => o.estado !== "PERDIDO" && (o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE"));
+    return ots.filter(o => {
+      if (o.visible_mapa === false) return false;
+      if (o.estado === "PERDIDO") return false;
+      return o.estado === "EN PROCESO" || o.estado === "FINALIZADO" || o.estado === "PENDIENTE";
+    });
   }, [ots]);
+
+  // FIX: Búsqueda robusta de sede por texto.
+  const buscarSede = (texto: string): (MinaCoord & { visible?: boolean }) | null => {
+    if (!texto) return null;
+    const textoUpper = texto.toUpperCase().trim();
+    if (!textoUpper) return null;
+
+    // 1. Match exacto
+    let found = todasLasSedes.find(s => s.nombre.toUpperCase() === textoUpper);
+    if (found) return found;
+
+    // 2. Tokens significativos (>=3 chars)
+    const tokens = textoUpper.split(/[\s,;:.\/\\\-|()]+/).filter(t => t.length >= 3);
+    if (tokens.length === 0) return null;
+
+    // 3. Tokens completos de la sede en el texto
+    for (const s of todasLasSedes) {
+      const nombreUpper = s.nombre.toUpperCase();
+      const sedeTokens = nombreUpper.split(/[\s,;:.\/\\\-|()]+/).filter(t => t.length >= 3);
+      for (const tk of sedeTokens) {
+        if (tokens.includes(tk)) return s;
+      }
+    }
+
+    // 4. Fallback para nombres cortos (<=6 chars)
+    for (const s of todasLasSedes) {
+      const nombreUpper = s.nombre.toUpperCase();
+      if (nombreUpper.length <= 6 && (textoUpper.includes(nombreUpper) || nombreUpper.includes(textoUpper))) {
+        return s;
+      }
+    }
+
+    return null;
+  };
 
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
     for (const sede of todasLasSedes) {
       grupos[sede.nombre] = { coord: sede, ots: [], otsEnRango: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
     }
-    
+
     for (const ot of otsValidas) {
-      let coord: (MinaCoord & { visible?: boolean }) | null = null;
-      const buscarEn = (texto: string) => {
-        if (!texto) return null;
-        const textoUpper = texto.toUpperCase().trim();
-        return todasLasSedes.find(s => s.nombre.toUpperCase() === textoUpper || textoUpper.includes(s.nombre.toUpperCase()) || s.nombre.toUpperCase().includes(textoUpper));
-      };
-      coord = buscarEn(ot.sede) || buscarEn(ot.cliente);
+      const coord = buscarSede(ot.sede) || buscarSede(ot.cliente);
       if (!coord) continue;
       const key = coord.nombre;
       if (!grupos[key]) grupos[key] = { coord, ots: [], otsEnRango: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
@@ -157,11 +192,11 @@ export function MapaMinas() {
       g.otsEnRango = g.ots.filter(ot => codigosEnRango.has(ot.codigo));
       g.hasActividadEnRango = g.otsEnRango.length > 0;
     });
-    
+
     return Object.values(grupos);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [otsValidas, todasLasSedes, cronograma, fechaInicio, fechaFin]);
 
-  // FIX: Lista filtra por query, fechas y ocultarSinOts
   const minasFiltradasLista = useMemo(() => {
     let result = minasAgrupadas;
     if (ocultarSinOts) {
@@ -172,7 +207,7 @@ export function MapaMinas() {
     }
     if (query) {
       const q = query.toLowerCase();
-      result = result.filter(g => 
+      result = result.filter(g =>
         g.coord.nombre.toLowerCase().includes(q) ||
         g.coord.region.toLowerCase().includes(q) ||
         g.ots.some(ot => ot.codigo.toLowerCase().includes(q) || ot.cliente.toLowerCase().includes(q))
@@ -181,7 +216,6 @@ export function MapaMinas() {
     return result;
   }, [minasAgrupadas, query, filtroFechasActivo, ocultarSinOts]);
 
-  // FIX: Mapa filtra además las que tienen visible=false
   const minasParaMapa = useMemo(() => {
     return minasFiltradasLista.filter(g => g.coord.visible !== false);
   }, [minasFiltradasLista]);
@@ -189,7 +223,7 @@ export function MapaMinas() {
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
     const tecnicosMap: Record<string, TecnicoAgrupado> = {};
     const codigosOtEnRango = new Set(mina.otsEnRango.map(ot => ot.codigo));
-    
+
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
       if (!e.actividad.includes("PROYECTO") && !e.actividad.includes("SERV.")) continue;
@@ -216,33 +250,31 @@ export function MapaMinas() {
   const handleToggleVisibleSede = async (nombre: string) => {
     const sedeExcel = sedesExcel.find(s => s.nombre === nombre);
     const isVisible = sedeExcel ? (sedeExcel.visible ?? true) : true;
-    
+
     if (sedeExcel) {
-      setSedesExcel(prev => prev.map(s => 
+      setSedesExcel(prev => prev.map(s =>
         s.nombre === nombre ? { ...s, visible: !isVisible } : s
       ));
     } else {
-      // Si es predefinida, la agregamos al Excel con visible=false
       const sedePredef = MINAS_PERU.find(s => s.nombre === nombre);
       if (sedePredef) {
         setSedesExcel(prev => [...prev, { ...sedePredef, visible: false }]);
       }
     }
-    
+
     try {
-      const res = await fetch("/api/sedes", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ accion: "toggle_visible_sede", nombre, visible: !isVisible }) 
+      const res = await fetch("/api/sedes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "toggle_visible_sede", nombre, visible: !isVisible })
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await cargarDatosSilencioso();
       showToast(`Sede ${!isVisible ? 'visible' : 'oculta'}`, "ok");
     } catch (err) {
-      // Revertir
       if (sedeExcel) {
-        setSedesExcel(prev => prev.map(s => 
+        setSedesExcel(prev => prev.map(s =>
           s.nombre === nombre ? { ...s, visible: isVisible } : s
         ));
       }
@@ -258,7 +290,6 @@ export function MapaMinas() {
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
-  // FIX: Usar minasParaMapa
   useEffect(() => {
     if (!mapRef.current) return;
     markersRef.current.forEach(m => m.remove());
@@ -332,7 +363,6 @@ export function MapaMinas() {
             {filtroFechasActivo && (
               <div className="text-[9px] text-[#E91E63] text-center mt-1">📋 Filtrando por fechas activo</div>
             )}
-            {/* NUEVO: Checkbox ocultar sin OTs */}
             <label className="flex items-center gap-1.5 text-[10px] text-gray-600 mt-1 cursor-pointer">
               <input type="checkbox" checked={ocultarSinOts} onChange={(e) => setOcultarSinOts(e.target.checked)} className="rounded" />
               Ocultar sedes sin OTs
@@ -350,7 +380,6 @@ export function MapaMinas() {
           </div>
         </div>
 
-        {/* FIX: Lista con ojo para ocultar del mapa */}
         <div className="flex-1 overflow-y-auto">
           {minasFiltradasLista.length === 0 ? (
             <div className="p-4 text-center text-xs text-gray-400">No hay sedes que coincidan</div>
@@ -360,8 +389,8 @@ export function MapaMinas() {
               return (
                 <div key={mina.coord.nombre} className={`p-2 border-b border-gray-100 hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""} ${!isVisible ? 'opacity-50' : ''}`}>
                   <div className="flex items-center gap-2">
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleToggleVisibleSede(mina.coord.nombre); }} 
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleToggleVisibleSede(mina.coord.nombre); }}
                       className={`p-0.5 rounded ${isVisible ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`}
                       title={isVisible ? "Ocultar del mapa" : "Mostrar en mapa"}
                     >
@@ -412,7 +441,7 @@ export function MapaMinas() {
                   <span className="text-blue-600">⏳ {selectedMina.pendiente}</span>
                   <span className="text-gray-400">Total: {selectedMina.total}</span>
                 </div>
-                
+
                 {(() => {
                   const tecnicosMina = getTecnicosEnMina(selectedMina);
                   return (
@@ -477,19 +506,36 @@ export function MapaMinas() {
                   <Info size={12} className="text-[#E91E63]" />
                   <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
                 </div>
-                <button onClick={() => setImgKey(prev => prev + 1)} className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200" title="Recargar imagen">
-                  <RefreshCw size={10} />
+                <button
+                  onClick={() => setImgKey((prev) => prev + 1)}
+                  className="p-1 text-gray-500 hover:text-[#E91E63] rounded"
+                  title="Recargar imagen"
+                >
+                  <RefreshCw size={12} />
                 </button>
               </div>
-              <div className="h-28 relative overflow-hidden bg-gray-100">
-                <img key={`${selectedMina.coord.ciudad}-${imgKey}`} src={`${selectedMina.coord.foto_ciudad}?t=${imgKey}`} alt={selectedMina.coord.ciudad} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                <div className="absolute bottom-1 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">{selectedMina.coord.ciudad}</div>
-              </div>
-              <div className="flex-1 p-3 flex flex-col">
-                <div className="text-[10px] text-gray-600 leading-relaxed flex-1">{selectedMina.coord.datoCurioso}</div>
-                <div className="mt-2 pt-2 border-t border-gray-100">
-                  <div className="text-[9px] text-gray-400 uppercase tracking-wider">Región</div>
-                  <div className="text-[10px] text-gray-700 font-semibold">{selectedMina.coord.region}</div>
+              <div className="flex-1 overflow-y-auto p-3">
+                {selectedMina.coord.foto_ciudad ? (
+                  <div key={imgKey} className="mb-3">
+                    <img
+                      src={selectedMina.coord.foto_ciudad}
+                      alt={`Foto de ${selectedMina.coord.ciudad ?? selectedMina.coord.nombre}`}
+                      className="w-full h-32 object-cover rounded border border-gray-200"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                    <div className="text-[10px] text-gray-500 mt-1 text-center italic">
+                      {selectedMina.coord.ciudad ?? selectedMina.coord.nombre}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mb-3 h-32 flex items-center justify-center bg-gray-100 rounded text-[10px] text-gray-400">
+                    Sin imagen
+                  </div>
+                )}
+                <div className="text-xs text-gray-700 leading-relaxed">
+                  {selectedMina.coord.datoCurioso || "Sin dato curioso registrado para esta sede."}
                 </div>
               </div>
             </div>
