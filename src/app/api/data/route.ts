@@ -2,7 +2,7 @@
  * GET /api/data
  * Devuelve TODOS los datos necesarios para renderizar la app:
  *   - tecnicos (activos + inactivos)
- *   - ots (activas)
+ *   - ots (todas las OTs con visible_mapa)
  *   - actividades (con colores)
  *   - cronograma (mapa)
  *   - modoAcceso (lector | editor)
@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import {
   getTecnicos,
-  getOTsActivas,
+  getOTs,
   getActividades,
   getCronogramaMap,
 } from "@/lib/sheets";
@@ -21,9 +21,9 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    const [tecnicos, ots, actividades, cronograma, modoAcceso] = await Promise.all([
+    const [tecnicos, allOts, actividades, cronograma, modoAcceso] = await Promise.all([
       getTecnicos(),
-      getOTsActivas(),
+      getOTs(),
       getActividades(),
       getCronogramaMap(),
       getModoAcceso(),
@@ -33,7 +33,7 @@ export async function GET() {
       ok: true,
       data: {
         tecnicos,
-        ots,
+        ots: allOts,
         actividades,
         cronograma,
         modoAcceso,
