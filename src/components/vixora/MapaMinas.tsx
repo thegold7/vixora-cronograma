@@ -16,16 +16,16 @@ interface MinaAgrupada {
   finalizado: number;
   pendiente: number;
   total: number;
-  hasActividadEnRango: boolean;  // Cualquier cronograma con OT de la sede en rango
+  hasActividadEnRango: boolean;  // Cualquier cronograma con actividad ROJA y OT de la sede en rango
 }
 
 interface TecnicoViaje {
   tecnico: Tecnico;
-  fechaInicio: string;           // Fecha real del inicio del viaje
-  fechaFin: string;              // Fecha real del fin del viaje
+  fechaInicio: string;
+  fechaFin: string;
   actividades: Set<string>;
-  otsRealizadas: Set<string>;    // OTs de la sede en este viaje
-  fechas: string[];              // Todas las fechas del viaje
+  otsRealizadas: Set<string>;
+  fechas: string[];
 }
 
 interface OTRealizada {
@@ -54,7 +54,9 @@ export function MapaMinas() {
   const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
 
-  // Actividades de color rojo (PROYECTO ANT, PROYECTO MC, SERV. LIMA, SERV. PROVINCIA, etc.)
+  // Actividades de color rojo (PROYECTO ANT, PROYECTO MC, SERV. LIMA, SERV. PROVINCIA,
+  // MOVILIZACIÓN, DESCANSO PROY., DESC.MÉDICO, PERMISO, CURSOS, VACACIONES, FERIADO,
+  // FIN DE SEMANA, DESCANSO ANT, DESCANSO MC, etc.)
   const actividadesRojas = useMemo(() => {
     return new Set(actividades.filter(a => a.color === "rojo").map(a => a.nombre));
   }, [actividades]);
@@ -132,7 +134,7 @@ export function MapaMinas() {
     return Array.from(mapaSedes.values());
   }, [sedesExcel]);
 
-  // FIX: Mostrar TODAS las OTs excepto PERDIDO y visible_mapa=false.
+  // Mostrar TODAS las OTs excepto PERDIDO y visible_mapa=false.
   const otsValidas = useMemo(() => {
     return ots.filter(o => {
       if (o.visible_mapa === false) return false;
@@ -141,7 +143,7 @@ export function MapaMinas() {
     });
   }, [ots]);
 
-  // FIX: Búsqueda robusta de sede por texto.
+  // Búsqueda robusta de sede por texto.
   const buscarSede = (texto: string): (MinaCoord & { visible?: boolean }) | null => {
     if (!texto) return null;
     const textoUpper = texto.toUpperCase().trim();
@@ -194,18 +196,9 @@ export function MapaMinas() {
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
 
-    // FIX: codigosEnRango = cualquier OT asignada en cronograma dentro del rango (cualquier actividad)
-    // Esto determina si la sede tiene actividad en el rango (para visibilidad de la sede).
-    const codigosEnRango = new Set<string>();
-    for (const e of Object.values(cronograma)) {
-      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
-      if (e.ots_asignadas && e.ots_asignadas !== "—") {
-        e.ots_asignadas.split(",").map(s => s.trim()).forEach(c => codigosEnRango.add(c));
-      }
-    }
-
     // FIX: codigosRealizandose = OTs con actividad ROJA en el rango
-    // Esto determina las OTs que se están realizando (sección específica).
+    // Solo las actividades rojas (servicios, proyectos, descansos, etc.) cuentan
+    // para que una sede aparezca en el mapa.
     const codigosRealizandose = new Set<string>();
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
@@ -217,8 +210,8 @@ export function MapaMinas() {
 
     Object.values(grupos).forEach(g => {
       g.otsRealizandose = g.ots.filter(ot => codigosRealizandose.has(ot.codigo));
-      // FIX: hasActividadEnRango = cualquier OT de la sede está en el rango (no solo rojas)
-      g.hasActividadEnRango = g.ots.some(ot => codigosEnRango.has(ot.codigo));
+      // FIX: hasActividadEnRango ahora se basa SOLO en actividades rojas
+      g.hasActividadEnRango = g.otsRealizandose.length > 0;
     });
 
     return Object.values(grupos);
@@ -231,6 +224,7 @@ export function MapaMinas() {
       result = result.filter(g => g.total > 0);
     }
     if (filtroFechasActivo) {
+      // FIX: Solo mostrar sedes con actividades rojas en el rango
       result = result.filter(g => g.hasActividadEnRango);
     }
     if (query) {
@@ -248,18 +242,19 @@ export function MapaMinas() {
     return minasFiltradasLista.filter(g => g.coord.visible !== false);
   }, [minasFiltradasLista]);
 
-  // FIX: getTecnicosEnMina ahora agrupa por VIAJES (subidas).
-  // Un viaje = días consecutivos (sin saltos > 1 día) en los que el técnico
-  // estuvo en esta sede. Si hay un salto, se considera un viaje distinto.
+  // FIX: getTecnicosEnMina ahora SOLO considera actividades ROJAS.
+  // Agrupa por VIAJES (subidas): días consecutivos (sin saltos > 1 día).
   // El filtro de fechas incluye cualquier viaje que tenga al menos 1 día dentro del rango,
   // pero las fechas mostradas son las REALES del viaje completo.
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoViaje[] => {
     const codigosOtDeSede = new Set(mina.ots.map(ot => ot.codigo));
 
-    // Recolectar TODAS las entradas del cronograma para esta sede (sin importar fechas)
+    // Recolectar entradas del cronograma con actividad ROJA para esta sede
     const entriesByTecnico: Record<string, { fecha: string; actividad: string; ots: string[] }[]> = {};
 
     for (const e of Object.values(cronograma)) {
+      // FIX: Solo actividades rojas
+      if (!actividadesRojas.has(e.actividad)) continue;
       if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
       const codigos = e.ots_asignadas.split(",").map(s => s.trim());
       const perteneceAMina = codigos.some(cod => codigosOtDeSede.has(cod));
@@ -274,7 +269,6 @@ export function MapaMinas() {
     }
 
     // Para cada técnico, agrupar entradas en viajes (días consecutivos)
-    // Luego incluir solo los viajes que tengan al menos 1 día en el rango del filtro
     const viajes: TecnicoViaje[] = [];
     for (const [tecId, entries] of Object.entries(entriesByTecnico)) {
       entries.sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -312,8 +306,11 @@ export function MapaMinas() {
           e.ots.forEach(o => otsRealizadasTrip.add(o));
         }
 
+        const tec = tecnicos.find(t => t.id === tecId);
+        if (!tec) continue;
+
         viajes.push({
-          tecnico: tecnicos.find(t => t.id === tecId)!,
+          tecnico: tec,
           fechaInicio: fechas[0],
           fechaFin: fechas[fechas.length - 1],
           actividades: actividadesTrip,
@@ -326,7 +323,7 @@ export function MapaMinas() {
     return viajes.sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
-  // FIX: getOTsRealizandose devuelve cada OT con el técnico que la realiza y el rango de fechas
+  // getOTsRealizandose: cada OT con el técnico que la realiza y el rango de fechas
   const getOTsRealizandose = (mina: MinaAgrupada): OTRealizada[] => {
     const resultado: OTRealizada[] = [];
 
@@ -565,13 +562,14 @@ export function MapaMinas() {
                   <span className="text-gray-400">Total: {selectedMina.total}</span>
                 </div>
 
-                {/* Técnicos en sede (agrupados por viaje/subida) */}
+                {/* Técnicos en sede (agrupados por viaje/subida, solo actividades rojas) */}
                 {(() => {
                   const viajes = getTecnicosEnMina(selectedMina);
+                  const plural = viajes.length !== 1 ? 's' : '';
                   return (
                     <>
                       <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">
-                        Técnicos en sede ({viajes.length} viaje{s.length !== 1 ? 's' : ''}):
+                        Técnicos en sede ({viajes.length} viaje{plural}):
                       </div>
                       <div className="space-y-1 mb-3">
                         {viajes.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay técnicos en estas fechas</p>}
