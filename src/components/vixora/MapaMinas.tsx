@@ -11,20 +11,26 @@ import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, 
 interface MinaAgrupada {
   coord: MinaCoord & { visible?: boolean };
   ots: OT[];                    // TODAS las OTs de la sede (sin filtro de fechas)
-  otsRealizandose: OT[];        // OTs asignadas a técnicos con actividades rojas en el rango de fechas
+  otsRealizandose: OT[];        // OTs asignadas a técnicos con actividades rojas en el rango
   enProceso: number;
   finalizado: number;
   pendiente: number;
   total: number;
-  hasActividadEnRango: boolean;
+  hasActividadEnRango: boolean;  // Cualquier cronograma con OT de la sede en rango
 }
 
-interface TecnicoAgrupado {
+interface TecnicoViaje {
   tecnico: Tecnico;
-  fechaInicio: string;
-  fechaFin: string;
+  fechaInicio: string;           // Fecha real del inicio del viaje
+  fechaFin: string;              // Fecha real del fin del viaje
   actividades: Set<string>;
-  otsRealizadas: Set<string>;   // OTs de esta sede que el técnico está realizando
+  otsRealizadas: Set<string>;    // OTs de la sede en este viaje
+  fechas: string[];              // Todas las fechas del viaje
+}
+
+interface OTRealizada {
+  ot: OT;
+  tecnicos: { tecnico: Tecnico; fechaInicio: string; fechaFin: string }[];
 }
 
 export function MapaMinas() {
@@ -127,8 +133,6 @@ export function MapaMinas() {
   }, [sedesExcel]);
 
   // FIX: Mostrar TODAS las OTs excepto PERDIDO y visible_mapa=false.
-  // Antes se filtraba por estado (EN PROCESO/FINALIZADO/PENDIENTE) lo que hacía
-  // que OTs con estado vacío o desconocido no aparecieran (ej: 5000360424 en MARCOBRE).
   const otsValidas = useMemo(() => {
     return ots.filter(o => {
       if (o.visible_mapa === false) return false;
@@ -177,7 +181,7 @@ export function MapaMinas() {
       grupos[sede.nombre] = { coord: sede, ots: [], otsRealizandose: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
     }
 
-    // FIX: Asignar cada OT a su sede (usando ot.sede primero, ot.cliente como fallback)
+    // Asignar cada OT a su sede
     for (const ot of otsValidas) {
       const coord = buscarSede(ot.sede) || buscarSede(ot.cliente);
       if (!coord) continue;
@@ -190,7 +194,18 @@ export function MapaMinas() {
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
 
-    // FIX: OTs que se están realizando = OTs asignadas en cronograma con actividad ROJA en el rango de fechas
+    // FIX: codigosEnRango = cualquier OT asignada en cronograma dentro del rango (cualquier actividad)
+    // Esto determina si la sede tiene actividad en el rango (para visibilidad de la sede).
+    const codigosEnRango = new Set<string>();
+    for (const e of Object.values(cronograma)) {
+      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        e.ots_asignadas.split(",").map(s => s.trim()).forEach(c => codigosEnRango.add(c));
+      }
+    }
+
+    // FIX: codigosRealizandose = OTs con actividad ROJA en el rango
+    // Esto determina las OTs que se están realizando (sección específica).
     const codigosRealizandose = new Set<string>();
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
@@ -202,7 +217,8 @@ export function MapaMinas() {
 
     Object.values(grupos).forEach(g => {
       g.otsRealizandose = g.ots.filter(ot => codigosRealizandose.has(ot.codigo));
-      g.hasActividadEnRango = g.otsRealizandose.length > 0;
+      // FIX: hasActividadEnRango = cualquier OT de la sede está en el rango (no solo rojas)
+      g.hasActividadEnRango = g.ots.some(ot => codigosEnRango.has(ot.codigo));
     });
 
     return Object.values(grupos);
@@ -232,41 +248,114 @@ export function MapaMinas() {
     return minasFiltradasLista.filter(g => g.coord.visible !== false);
   }, [minasFiltradasLista]);
 
-  // FIX: getTecnicosEnMina ahora considera TODAS las OTs de la sede (no solo otsEnRango)
-  // y NO filtra por actividad. Cualquier entrada del cronograma con OT asignada a esta sede
-  // cuenta como técnico presente. Esto resuelve el problema de técnicos que no aparecían.
-  const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoAgrupado[] => {
-    const tecnicosMap: Record<string, TecnicoAgrupado> = {};
+  // FIX: getTecnicosEnMina ahora agrupa por VIAJES (subidas).
+  // Un viaje = días consecutivos (sin saltos > 1 día) en los que el técnico
+  // estuvo en esta sede. Si hay un salto, se considera un viaje distinto.
+  // El filtro de fechas incluye cualquier viaje que tenga al menos 1 día dentro del rango,
+  // pero las fechas mostradas son las REALES del viaje completo.
+  const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoViaje[] => {
     const codigosOtDeSede = new Set(mina.ots.map(ot => ot.codigo));
 
-    for (const e of Object.values(cronograma)) {
-      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
-      if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
+    // Recolectar TODAS las entradas del cronograma para esta sede (sin importar fechas)
+    const entriesByTecnico: Record<string, { fecha: string; actividad: string; ots: string[] }[]> = {};
 
+    for (const e of Object.values(cronograma)) {
+      if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
       const codigos = e.ots_asignadas.split(",").map(s => s.trim());
       const perteneceAMina = codigos.some(cod => codigosOtDeSede.has(cod));
       if (!perteneceAMina) continue;
 
       const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
-      if (tecnico && tecnico.activo) {
-        const otsEnEstaSede = codigos.filter(cod => codigosOtDeSede.has(cod));
-        if (!tecnicosMap[tecnico.id]) {
-          tecnicosMap[tecnico.id] = {
-            tecnico,
-            fechaInicio: e.fecha,
-            fechaFin: e.fecha,
-            actividades: new Set([e.actividad]),
-            otsRealizadas: new Set(otsEnEstaSede),
-          };
-        } else {
-          if (e.fecha < tecnicosMap[tecnico.id].fechaInicio) tecnicosMap[tecnico.id].fechaInicio = e.fecha;
-          if (e.fecha > tecnicosMap[tecnico.id].fechaFin) tecnicosMap[tecnico.id].fechaFin = e.fecha;
-          tecnicosMap[tecnico.id].actividades.add(e.actividad);
-          otsEnEstaSede.forEach(cod => tecnicosMap[tecnico.id].otsRealizadas.add(cod));
+      if (!tecnico || !tecnico.activo) continue;
+
+      if (!entriesByTecnico[tecnico.id]) entriesByTecnico[tecnico.id] = [];
+      const otsEnEstaSede = codigos.filter(cod => codigosOtDeSede.has(cod));
+      entriesByTecnico[tecnico.id].push({ fecha: e.fecha, actividad: e.actividad, ots: otsEnEstaSede });
+    }
+
+    // Para cada técnico, agrupar entradas en viajes (días consecutivos)
+    // Luego incluir solo los viajes que tengan al menos 1 día en el rango del filtro
+    const viajes: TecnicoViaje[] = [];
+    for (const [tecId, entries] of Object.entries(entriesByTecnico)) {
+      entries.sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+      // Agrupar en viajes (días consecutivos, sin saltos > 1 día)
+      const trips: { fecha: string; actividad: string; ots: string[] }[][] = [];
+      let currentTrip: { fecha: string; actividad: string; ots: string[] }[] = [];
+      let prevDate: string | null = null;
+
+      for (const entry of entries) {
+        if (prevDate) {
+          const prev = new Date(prevDate + "T00:00:00");
+          const curr = new Date(entry.fecha + "T00:00:00");
+          const diffDays = (curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
+          if (diffDays > 1) {
+            if (currentTrip.length > 0) trips.push(currentTrip);
+            currentTrip = [];
+          }
         }
+        currentTrip.push(entry);
+        prevDate = entry.fecha;
+      }
+      if (currentTrip.length > 0) trips.push(currentTrip);
+
+      // Filtrar viajes: incluir solo los que tienen al menos 1 día en el rango del filtro
+      for (const trip of trips) {
+        const tripHasDateInRange = trip.some(e => e.fecha >= fechaInicio && e.fecha <= fechaFin);
+        if (!tripHasDateInRange) continue;
+
+        const fechas = trip.map(e => e.fecha).sort();
+        const actividadesTrip = new Set<string>();
+        const otsRealizadasTrip = new Set<string>();
+        for (const e of trip) {
+          actividadesTrip.add(e.actividad);
+          e.ots.forEach(o => otsRealizadasTrip.add(o));
+        }
+
+        viajes.push({
+          tecnico: tecnicos.find(t => t.id === tecId)!,
+          fechaInicio: fechas[0],
+          fechaFin: fechas[fechas.length - 1],
+          actividades: actividadesTrip,
+          otsRealizadas: otsRealizadasTrip,
+          fechas,
+        });
       }
     }
-    return Object.values(tecnicosMap).sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
+
+    return viajes.sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
+  };
+
+  // FIX: getOTsRealizandose devuelve cada OT con el técnico que la realiza y el rango de fechas
+  const getOTsRealizandose = (mina: MinaAgrupada): OTRealizada[] => {
+    const resultado: OTRealizada[] = [];
+
+    for (const ot of mina.otsRealizandose) {
+      const tecnicosOT: Record<string, { tecnico: Tecnico; fechaInicio: string; fechaFin: string }> = {};
+
+      for (const e of Object.values(cronograma)) {
+        if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+        if (!actividadesRojas.has(e.actividad)) continue;
+        if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
+
+        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+        if (!codigos.includes(ot.codigo)) continue;
+
+        const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
+        if (!tecnico || !tecnico.activo) continue;
+
+        if (!tecnicosOT[tecnico.id]) {
+          tecnicosOT[tecnico.id] = { tecnico, fechaInicio: e.fecha, fechaFin: e.fecha };
+        } else {
+          if (e.fecha < tecnicosOT[tecnico.id].fechaInicio) tecnicosOT[tecnico.id].fechaInicio = e.fecha;
+          if (e.fecha > tecnicosOT[tecnico.id].fechaFin) tecnicosOT[tecnico.id].fechaFin = e.fecha;
+        }
+      }
+
+      resultado.push({ ot, tecnicos: Object.values(tecnicosOT) });
+    }
+
+    return resultado;
   };
 
   const handleToggleVisibleSede = async (nombre: string) => {
@@ -476,36 +565,35 @@ export function MapaMinas() {
                   <span className="text-gray-400">Total: {selectedMina.total}</span>
                 </div>
 
-                {/* Técnicos en sede con OTs que están realizando */}
+                {/* Técnicos en sede (agrupados por viaje/subida) */}
                 {(() => {
-                  const tecnicosMina = getTecnicosEnMina(selectedMina);
+                  const viajes = getTecnicosEnMina(selectedMina);
                   return (
                     <>
                       <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 mt-2">
-                        Técnicos en sede ({tecnicosMina.length}):
+                        Técnicos en sede ({viajes.length} viaje{s.length !== 1 ? 's' : ''}):
                       </div>
                       <div className="space-y-1 mb-3">
-                        {tecnicosMina.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay técnicos en estas fechas</p>}
-                        {tecnicosMina.map((t, i) => (
-                          <div key={i} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
+                        {viajes.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay técnicos en estas fechas</p>}
+                        {viajes.map((v, i) => (
+                          <div key={`${v.tecnico.id}-${i}`} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
                             <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
-                              {t.tecnico.foto_url ? (
-                                <img src={t.tecnico.foto_url} alt={t.tecnico.nombre} className="w-full h-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
+                              {v.tecnico.foto_url ? (
+                                <img src={v.tecnico.foto_url} alt={v.tecnico.nombre} className="w-full h-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
                               ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold text-gray-500">{getIniciales(t.tecnico.nombre)}</div>
+                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold text-gray-500">{getIniciales(v.tecnico.nombre)}</div>
                               )}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-xs font-semibold text-gray-900 truncate">{t.tecnico.nombre}</div>
+                              <div className="text-xs font-semibold text-gray-900 truncate">{v.tecnico.nombre}</div>
                               <div className="text-[10px] text-gray-500 truncate">
-                                {Array.from(t.actividades).join(", ")}
-                                {t.otsRealizadas.size > 0 && (
-                                  <span className="text-[#E91E63] font-semibold"> · OT: {Array.from(t.otsRealizadas).join(", ")}</span>
-                                )}
+                                <span className="text-[#E91E63] font-semibold">OT: {Array.from(v.otsRealizadas).join(", ")}</span>
+                                <span className="mx-1">·</span>
+                                <span>{Array.from(v.actividades).join(", ")}</span>
                               </div>
                             </div>
                             <div className="text-[10px] text-gray-600 shrink-0 font-medium">
-                              {t.fechaInicio === t.fechaFin ? fmtFecha(t.fechaInicio) : `${fmtFecha(t.fechaInicio)} → ${fmtFecha(t.fechaFin)}`}
+                              {v.fechaInicio === v.fechaFin ? fmtFecha(v.fechaInicio) : `${fmtFecha(v.fechaInicio)} → ${fmtFecha(v.fechaFin)}`}
                             </div>
                           </div>
                         ))}
@@ -513,6 +601,43 @@ export function MapaMinas() {
                     </>
                   );
                 })()}
+
+                {/* OTs que se están realizando (con OT + técnico + fecha) */}
+                <div className="text-[10px] font-bold text-[#E91E63] uppercase mb-1 flex items-center justify-between">
+                  <span>OTs que se están realizando ({selectedMina.otsRealizandose.length}):</span>
+                  <button onClick={() => setOtsRealizandoseExpandidas(!otsRealizandoseExpandidas)} className="p-0.5 hover:bg-gray-200 rounded">
+                    {otsRealizandoseExpandidas ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  </button>
+                </div>
+                {otsRealizandoseExpandidas && (
+                  <div className="space-y-1 mb-3">
+                    {selectedMina.otsRealizandose.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay OTs en realización en estas fechas</p>}
+                    {(() => {
+                      const otsRealizandose = getOTsRealizandose(selectedMina);
+                      return otsRealizandose.map(({ ot, tecnicos }) => {
+                        const color = getEstadoColor(ot.estado);
+                        return (
+                          <div key={ot.codigo} className="p-1.5 rounded border border-[#E91E63]/30 bg-pink-50/50 hover:bg-pink-50">
+                            <div className="flex items-center gap-2">
+                              <div className="text-[10px] font-mono font-bold text-gray-900 w-24 truncate">{ot.codigo}</div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
+                              </div>
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>{ot.estado || "—"}</span>
+                            </div>
+                            {tecnicos.map(({ tecnico, fechaInicio, fechaFin }) => (
+                              <div key={tecnico.id} className="mt-1 flex items-center gap-1 text-[10px] text-gray-600 pl-1">
+                                <span className="font-semibold text-gray-900">{tecnico.nombre}</span>
+                                <span className="text-gray-400">·</span>
+                                <span>{fechaInicio === fechaFin ? fmtFecha(fechaInicio) : `${fmtFecha(fechaInicio)} → ${fmtFecha(fechaFin)}`}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
 
                 {/* OTs asociadas a la sede (TODAS, sin filtro de fechas) */}
                 <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center justify-between">
@@ -522,37 +647,12 @@ export function MapaMinas() {
                   </button>
                 </div>
                 {otsAsociadasExpandidas && (
-                  <div className="space-y-1 mb-3">
+                  <div className="space-y-1">
                     {selectedMina.ots.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay OTs asociadas a esta sede</p>}
                     {selectedMina.ots.map((ot) => {
                       const color = getEstadoColor(ot.estado);
                       return (
                         <div key={ot.codigo} className="p-1.5 rounded border border-gray-200 flex items-center gap-2 hover:bg-gray-50">
-                          <div className="text-[10px] font-mono font-bold text-gray-900 w-24 truncate">{ot.codigo}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
-                          </div>
-                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>{ot.estado || "—"}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* OTs que se están realizando (asignadas a técnicos con actividades rojas en el rango) */}
-                <div className="text-[10px] font-bold text-[#E91E63] uppercase mb-1 flex items-center justify-between mt-3">
-                  <span>OTs que se están realizando ({selectedMina.otsRealizandose.length}):</span>
-                  <button onClick={() => setOtsRealizandoseExpandidas(!otsRealizandoseExpandidas)} className="p-0.5 hover:bg-gray-200 rounded">
-                    {otsRealizandoseExpandidas ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  </button>
-                </div>
-                {otsRealizandoseExpandidas && (
-                  <div className="space-y-1">
-                    {selectedMina.otsRealizandose.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay OTs en realización en estas fechas</p>}
-                    {selectedMina.otsRealizandose.map((ot) => {
-                      const color = getEstadoColor(ot.estado);
-                      return (
-                        <div key={ot.codigo} className="p-1.5 rounded border border-[#E91E63]/30 bg-pink-50/50 flex items-center gap-2 hover:bg-pink-50">
                           <div className="text-[10px] font-mono font-bold text-gray-900 w-24 truncate">{ot.codigo}</div>
                           <div className="flex-1 min-w-0">
                             <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
