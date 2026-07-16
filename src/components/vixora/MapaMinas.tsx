@@ -477,4 +477,25 @@ export function MapaMinas() {
                   <Info size={12} className="text-[#E91E63]" />
                   <span className="text-[10px] font-bold text-gray-700 uppercase">Dato Curioso</span>
                 </div>
-                <button onClick={() => setImgKey(prev => prev + 1)} className="p-1 text-gray-500 hover:text-[#E91E63] rounded
+                <button onClick={() => setImgKey(prev => prev + 1)} className="p-1 text-gray-500 hover:text-[#E91E63] rounded hover:bg-gray-200" title="Recargar imagen">
+                  <RefreshCw size={10} />
+                </button>
+              </div>
+              <div className="h-28 relative overflow-hidden bg-gray-100">
+                <img key={`${selectedMina.coord.ciudad}-${imgKey}`} src={`${selectedMina.coord.foto_ciudad}?t=${imgKey}`} alt={selectedMina.coord.ciudad} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                <div className="absolute bottom-1 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">{selectedMina.coord.ciudad}</div>
+              </div>
+              <div className="flex-1 p-3 flex flex-col">
+                <div className="text-[10px] text-gray-600 leading-relaxed flex-1">{selectedMina.coord.datoCurioso}</div>
+                <div className="mt-2 pt-2 border-t border-gray-100">
+                  <div className="text-[9px] text-gray-400 uppercase tracking-wider">Región</div>
+                  <div className="text-[10px] text-gray-700 font-semibold">{selectedMina.coord.region}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
