@@ -11,7 +11,6 @@ import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, 
 // FIX: Mapeo de actividades a sedes.
 // Esto permite que cuando un técnico tiene actividad "PROYECTO MC", se le asocie
 // a la sede MARCOBRE aunque la OT tenga un sede distinto en el Admin.
-// Claves en MAYÚSCULAS.
 const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
   "PROYECTO MC": "MARCOBRE",
   "PROYECTO ANT": "ANTAPACCAY",
@@ -19,8 +18,8 @@ const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
 
 interface MinaAgrupada {
   coord: MinaCoord & { visible?: boolean };
-  ots: OT[];                    // OTs donde ot.sede = esta sede (para "OTs asociadas")
-  otsRealizandose: OT[];        // OTs que se están realizando en esta sede (via ot.sede o actividad)
+  ots: OT[];                    // OTs donde ot.sede = esta sede
+  otsRealizandose: OT[];        // OTs que se están realizando en esta sede
   enProceso: number;
   finalizado: number;
   pendiente: number;
@@ -57,9 +56,6 @@ export function MapaMinas() {
   const [fechaInicio, setFechaInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
   const [fechaFin, setFechaFin] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)));
 
-  // Actividades de color rojo (PROYECTO ANT, PROYECTO MC, SERV. LIMA, SERV. PROVINCIA,
-  // MOVILIZACIÓN, DESCANSO PROY., DESC.MÉDICO, PERMISO, CURSOS, VACACIONES, FERIADO,
-  // FIN DE SEMANA, DESCANSO ANT, DESCANSO MC, etc.)
   const actividadesRojas = useMemo(() => {
     return new Set(actividades.filter(a => a.color === "rojo").map(a => a.nombre));
   }, [actividades]);
@@ -103,8 +99,6 @@ export function MapaMinas() {
     setFiltroFechasActivo(false);
   };
 
-  // Cargar todas las sedes y mezclar visibilidad del Excel.
-  // NO se fusionan por coordenadas: cada sede es independiente.
   const todasLasSedes = useMemo(() => {
     const mapaSedes = new Map<string, MinaCoord & { visible?: boolean }>();
 
@@ -146,14 +140,15 @@ export function MapaMinas() {
     });
   }, [ots]);
 
-  // Mapa de OTs por código para acceso rápido
+  // FIX: otMap ahora usa TODAS las OTs (no solo otsValidas).
+  // Esto permite que OTs con visible_mapa=false o PERDIDO se puedan referenciar
+  // desde el cronograma sin que desaparezcan del mapa las sedes asociadas.
   const otMap = useMemo(() => {
     const m: Record<string, OT> = {};
-    otsValidas.forEach(o => { m[o.codigo] = o; });
+    ots.forEach(o => { m[o.codigo] = o; });
     return m;
-  }, [otsValidas]);
+  }, [ots]);
 
-  // Búsqueda robusta de sede por texto.
   const buscarSede = (texto: string): (MinaCoord & { visible?: boolean }) | null => {
     if (!texto) return null;
     const textoUpper = texto.toUpperCase().trim();
@@ -184,19 +179,14 @@ export function MapaMinas() {
   };
 
   // FIX: Dado un cronograma entry, determinar a qué sedes pertenece.
-  // Una entrada puede pertenecer a múltiples sedes si:
-  //   1. La actividad mapea a una sede (ACTIVIDAD_SEDE_MAP)
-  //   2. Las OTs asignadas tienen sedes que coinciden con sedes conocidas
   const getSedesForEntry = (e: EntradaCronograma): Set<string> => {
     const sedes = new Set<string>();
 
-    // 1. From actividad name
     const sedeFromActividad = ACTIVIDAD_SEDE_MAP[e.actividad.toUpperCase()];
     if (sedeFromActividad) {
       sedes.add(sedeFromActividad);
     }
 
-    // 2. From OT's sede field
     if (e.ots_asignadas && e.ots_asignadas !== "—") {
       const codigos = e.ots_asignadas.split(",").map(s => s.trim());
       for (const cod of codigos) {
@@ -217,7 +207,6 @@ export function MapaMinas() {
       grupos[sede.nombre] = { coord: sede, ots: [], otsRealizandose: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
     }
 
-    // Asignar cada OT a su sede (ot.sede)
     for (const ot of otsValidas) {
       const coord = buscarSede(ot.sede) || buscarSede(ot.cliente);
       if (!coord) continue;
@@ -230,31 +219,35 @@ export function MapaMinas() {
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
 
-    // FIX: Build otsRealizandose por sede considerando ACTIVIDAD_SEDE_MAP
-    // Esto permite que OT 621237 (sede=ANTAPACCAY) aparezca en MARCOBRE
-    // cuando se asigna a un técnico con actividad PROYECTO MC.
+    // FIX: otsRealizandose y sedesConActividadEnRango se calculan en el mismo loop
     const otsRealizandoseBySede: Record<string, Set<string>> = {};
+    const sedesConActividadEnRango = new Set<string>();
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
       if (!actividadesRojas.has(e.actividad)) continue;
-      if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
 
       const sedesForEntry = getSedesForEntry(e);
-      const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+      // FIX: Cualquier sede en sedesForEntry tiene actividad en rango
+      sedesForEntry.forEach(s => sedesConActividadEnRango.add(s));
 
-      for (const sedeName of sedesForEntry) {
-        if (!otsRealizandoseBySede[sedeName]) otsRealizandoseBySede[sedeName] = new Set();
-        codigos.forEach(c => otsRealizandoseBySede[sedeName].add(c));
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+        for (const sedeName of sedesForEntry) {
+          if (!otsRealizandoseBySede[sedeName]) otsRealizandoseBySede[sedeName] = new Set();
+          codigos.forEach(c => otsRealizandoseBySede[sedeName].add(c));
+        }
       }
     }
 
     Object.values(grupos).forEach(g => {
       const codigosRealizandose = otsRealizandoseBySede[g.coord.nombre] || new Set<string>();
-      // FIX: Incluir OTs aunque no estén en g.ots (pueden tener sede distinta)
       g.otsRealizandose = Array.from(codigosRealizandose)
         .map(cod => otMap[cod])
         .filter((o): o is OT => !!o);
-      g.hasActividadEnRango = g.otsRealizandose.length > 0;
+      // FIX: hasActividadEnRango ahora se basa en sedesConActividadEnRango,
+      // no en otsRealizandose.length. Esto asegura que aunque una OT esté filtrada
+      // (visible_mapa=false o PERDIDO), la sede siga apareciendo si hay actividad roja.
+      g.hasActividadEnRango = sedesConActividadEnRango.has(g.coord.nombre);
     });
 
     return Object.values(grupos);
@@ -284,8 +277,6 @@ export function MapaMinas() {
     return minasFiltradasLista.filter(g => g.coord.visible !== false);
   }, [minasFiltradasLista]);
 
-  // FIX: getTecnicosEnMina ahora usa getSedesForEntry para incluir técnicos
-  // que están en esta sede via actividad (PROYECTO MC → MARCOBRE, etc.)
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoViaje[] => {
     const entriesByTecnico: Record<string, { fecha: string; actividad: string; ots: string[] }[]> = {};
 
@@ -305,7 +296,6 @@ export function MapaMinas() {
       entriesByTecnico[tecnico.id].push({ fecha: e.fecha, actividad: e.actividad, ots: codigos });
     }
 
-    // Para cada técnico, agrupar entradas en viajes (días consecutivos)
     const viajes: TecnicoViaje[] = [];
     for (const [tecId, entries] of Object.entries(entriesByTecnico)) {
       entries.sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -329,7 +319,6 @@ export function MapaMinas() {
       }
       if (currentTrip.length > 0) trips.push(currentTrip);
 
-      // Filtrar viajes: incluir solo los que tienen al menos 1 día en el rango del filtro
       for (const trip of trips) {
         const tripHasDateInRange = trip.some(e => e.fecha >= fechaInicio && e.fecha <= fechaFin);
         if (!tripHasDateInRange) continue;
@@ -564,7 +553,6 @@ export function MapaMinas() {
                   <span className="text-gray-400">Total: {selectedMina.total}</span>
                 </div>
 
-                {/* Técnicos en sede (agrupados por viaje/subida, con OTs realizadas inline) */}
                 {(() => {
                   const viajes = getTecnicosEnMina(selectedMina);
                   const plural = viajes.length !== 1 ? 's' : '';
@@ -615,7 +603,6 @@ export function MapaMinas() {
                   );
                 })()}
 
-                {/* OTs asociadas a la sede (TODAS, sin filtro de fechas) */}
                 <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center justify-between mt-3">
                   <span>OTs asociadas a la sede ({selectedMina.ots.length}):</span>
                   <button onClick={() => setOtsAsociadasExpandidas(!otsAsociadasExpandidas)} className="p-0.5 hover:bg-gray-200 rounded">
