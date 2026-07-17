@@ -5,18 +5,27 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import { MINAS_PERU, type MinaCoord } from "@/lib/minasData";
-import type { OT, Tecnico, Sede } from "@/lib/types";
+import type { OT, Tecnico, Sede, EntradaCronograma } from "@/lib/types";
 import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
+
+// FIX: Mapeo de actividades a sedes.
+// Esto permite que cuando un técnico tiene actividad "PROYECTO MC", se le asocie
+// a la sede MARCOBRE aunque la OT tenga un sede distinto en el Admin.
+// Claves en MAYÚSCULAS.
+const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
+  "PROYECTO MC": "MARCOBRE",
+  "PROYECTO ANT": "ANTAPACCAY",
+};
 
 interface MinaAgrupada {
   coord: MinaCoord & { visible?: boolean };
-  ots: OT[];                    // TODAS las OTs de la sede (sin filtro de fechas)
-  otsRealizandose: OT[];        // OTs asignadas a técnicos con actividades rojas en el rango
+  ots: OT[];                    // OTs donde ot.sede = esta sede (para "OTs asociadas")
+  otsRealizandose: OT[];        // OTs que se están realizando en esta sede (via ot.sede o actividad)
   enProceso: number;
   finalizado: number;
   pendiente: number;
   total: number;
-  hasActividadEnRango: boolean;  // Cualquier cronograma con actividad ROJA y OT de la sede en rango
+  hasActividadEnRango: boolean;
 }
 
 interface TecnicoViaje {
@@ -26,11 +35,6 @@ interface TecnicoViaje {
   actividades: Set<string>;
   otsRealizadas: Set<string>;
   fechas: string[];
-}
-
-interface OTRealizada {
-  ot: OT;
-  tecnicos: { tecnico: Tecnico; fechaInicio: string; fechaFin: string }[];
 }
 
 export function MapaMinas() {
@@ -44,7 +48,6 @@ export function MapaMinas() {
   const [imgKey, setImgKey] = useState(0);
   const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
   const [otsAsociadasExpandidas, setOtsAsociadasExpandidas] = useState(false);
-  const [otsRealizandoseExpandidas, setOtsRealizandoseExpandidas] = useState(false);
   const [filtroFechasActivo, setFiltroFechasActivo] = useState(false);
   const [ocultarSinOts, setOcultarSinOts] = useState(false);
 
@@ -143,21 +146,25 @@ export function MapaMinas() {
     });
   }, [ots]);
 
+  // Mapa de OTs por código para acceso rápido
+  const otMap = useMemo(() => {
+    const m: Record<string, OT> = {};
+    otsValidas.forEach(o => { m[o.codigo] = o; });
+    return m;
+  }, [otsValidas]);
+
   // Búsqueda robusta de sede por texto.
   const buscarSede = (texto: string): (MinaCoord & { visible?: boolean }) | null => {
     if (!texto) return null;
     const textoUpper = texto.toUpperCase().trim();
     if (!textoUpper) return null;
 
-    // 1. Match exacto
     let found = todasLasSedes.find(s => s.nombre.toUpperCase() === textoUpper);
     if (found) return found;
 
-    // 2. Tokens significativos (>=3 chars)
     const tokens = textoUpper.split(/[\s,;:.\/\\\-|()]+/).filter(t => t.length >= 3);
     if (tokens.length === 0) return null;
 
-    // 3. Tokens completos de la sede en el texto
     for (const s of todasLasSedes) {
       const nombreUpper = s.nombre.toUpperCase();
       const sedeTokens = nombreUpper.split(/[\s,;:.\/\\\-|()]+/).filter(t => t.length >= 3);
@@ -166,7 +173,6 @@ export function MapaMinas() {
       }
     }
 
-    // 4. Fallback para nombres cortos (<=6 chars)
     for (const s of todasLasSedes) {
       const nombreUpper = s.nombre.toUpperCase();
       if (nombreUpper.length <= 6 && (textoUpper.includes(nombreUpper) || nombreUpper.includes(textoUpper))) {
@@ -177,13 +183,41 @@ export function MapaMinas() {
     return null;
   };
 
+  // FIX: Dado un cronograma entry, determinar a qué sedes pertenece.
+  // Una entrada puede pertenecer a múltiples sedes si:
+  //   1. La actividad mapea a una sede (ACTIVIDAD_SEDE_MAP)
+  //   2. Las OTs asignadas tienen sedes que coinciden con sedes conocidas
+  const getSedesForEntry = (e: EntradaCronograma): Set<string> => {
+    const sedes = new Set<string>();
+
+    // 1. From actividad name
+    const sedeFromActividad = ACTIVIDAD_SEDE_MAP[e.actividad.toUpperCase()];
+    if (sedeFromActividad) {
+      sedes.add(sedeFromActividad);
+    }
+
+    // 2. From OT's sede field
+    if (e.ots_asignadas && e.ots_asignadas !== "—") {
+      const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+      for (const cod of codigos) {
+        const ot = otMap[cod];
+        if (ot) {
+          const coord = buscarSede(ot.sede) || buscarSede(ot.cliente);
+          if (coord) sedes.add(coord.nombre);
+        }
+      }
+    }
+
+    return sedes;
+  };
+
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
     for (const sede of todasLasSedes) {
       grupos[sede.nombre] = { coord: sede, ots: [], otsRealizandose: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
     }
 
-    // Asignar cada OT a su sede
+    // Asignar cada OT a su sede (ot.sede)
     for (const ot of otsValidas) {
       const coord = buscarSede(ot.sede) || buscarSede(ot.cliente);
       if (!coord) continue;
@@ -196,27 +230,36 @@ export function MapaMinas() {
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
 
-    // FIX: codigosRealizandose = OTs con actividad ROJA en el rango
-    // Solo las actividades rojas (servicios, proyectos, descansos, etc.) cuentan
-    // para que una sede aparezca en el mapa.
-    const codigosRealizandose = new Set<string>();
+    // FIX: Build otsRealizandose por sede considerando ACTIVIDAD_SEDE_MAP
+    // Esto permite que OT 621237 (sede=ANTAPACCAY) aparezca en MARCOBRE
+    // cuando se asigna a un técnico con actividad PROYECTO MC.
+    const otsRealizandoseBySede: Record<string, Set<string>> = {};
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
       if (!actividadesRojas.has(e.actividad)) continue;
-      if (e.ots_asignadas && e.ots_asignadas !== "—") {
-        e.ots_asignadas.split(",").map(s => s.trim()).forEach(c => codigosRealizandose.add(c));
+      if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
+
+      const sedesForEntry = getSedesForEntry(e);
+      const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+
+      for (const sedeName of sedesForEntry) {
+        if (!otsRealizandoseBySede[sedeName]) otsRealizandoseBySede[sedeName] = new Set();
+        codigos.forEach(c => otsRealizandoseBySede[sedeName].add(c));
       }
     }
 
     Object.values(grupos).forEach(g => {
-      g.otsRealizandose = g.ots.filter(ot => codigosRealizandose.has(ot.codigo));
-      // FIX: hasActividadEnRango ahora se basa SOLO en actividades rojas
+      const codigosRealizandose = otsRealizandoseBySede[g.coord.nombre] || new Set<string>();
+      // FIX: Incluir OTs aunque no estén en g.ots (pueden tener sede distinta)
+      g.otsRealizandose = Array.from(codigosRealizandose)
+        .map(cod => otMap[cod])
+        .filter((o): o is OT => !!o);
       g.hasActividadEnRango = g.otsRealizandose.length > 0;
     });
 
     return Object.values(grupos);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otsValidas, todasLasSedes, cronograma, fechaInicio, fechaFin, actividadesRojas]);
+  }, [otsValidas, todasLasSedes, cronograma, fechaInicio, fechaFin, actividadesRojas, otMap]);
 
   const minasFiltradasLista = useMemo(() => {
     let result = minasAgrupadas;
@@ -224,7 +267,6 @@ export function MapaMinas() {
       result = result.filter(g => g.total > 0);
     }
     if (filtroFechasActivo) {
-      // FIX: Solo mostrar sedes con actividades rojas en el rango
       result = result.filter(g => g.hasActividadEnRango);
     }
     if (query) {
@@ -242,30 +284,25 @@ export function MapaMinas() {
     return minasFiltradasLista.filter(g => g.coord.visible !== false);
   }, [minasFiltradasLista]);
 
-  // FIX: getTecnicosEnMina ahora SOLO considera actividades ROJAS.
-  // Agrupa por VIAJES (subidas): días consecutivos (sin saltos > 1 día).
-  // El filtro de fechas incluye cualquier viaje que tenga al menos 1 día dentro del rango,
-  // pero las fechas mostradas son las REALES del viaje completo.
+  // FIX: getTecnicosEnMina ahora usa getSedesForEntry para incluir técnicos
+  // que están en esta sede via actividad (PROYECTO MC → MARCOBRE, etc.)
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoViaje[] => {
-    const codigosOtDeSede = new Set(mina.ots.map(ot => ot.codigo));
-
-    // Recolectar entradas del cronograma con actividad ROJA para esta sede
     const entriesByTecnico: Record<string, { fecha: string; actividad: string; ots: string[] }[]> = {};
 
     for (const e of Object.values(cronograma)) {
-      // FIX: Solo actividades rojas
       if (!actividadesRojas.has(e.actividad)) continue;
-      if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
-      const codigos = e.ots_asignadas.split(",").map(s => s.trim());
-      const perteneceAMina = codigos.some(cod => codigosOtDeSede.has(cod));
-      if (!perteneceAMina) continue;
+
+      const sedesForEntry = getSedesForEntry(e);
+      if (!sedesForEntry.has(mina.coord.nombre)) continue;
 
       const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
       if (!tecnico || !tecnico.activo) continue;
 
       if (!entriesByTecnico[tecnico.id]) entriesByTecnico[tecnico.id] = [];
-      const otsEnEstaSede = codigos.filter(cod => codigosOtDeSede.has(cod));
-      entriesByTecnico[tecnico.id].push({ fecha: e.fecha, actividad: e.actividad, ots: otsEnEstaSede });
+      const codigos = e.ots_asignadas && e.ots_asignadas !== "—"
+        ? e.ots_asignadas.split(",").map(s => s.trim())
+        : [];
+      entriesByTecnico[tecnico.id].push({ fecha: e.fecha, actividad: e.actividad, ots: codigos });
     }
 
     // Para cada técnico, agrupar entradas en viajes (días consecutivos)
@@ -273,7 +310,6 @@ export function MapaMinas() {
     for (const [tecId, entries] of Object.entries(entriesByTecnico)) {
       entries.sort((a, b) => a.fecha.localeCompare(b.fecha));
 
-      // Agrupar en viajes (días consecutivos, sin saltos > 1 día)
       const trips: { fecha: string; actividad: string; ots: string[] }[][] = [];
       let currentTrip: { fecha: string; actividad: string; ots: string[] }[] = [];
       let prevDate: string | null = null;
@@ -321,38 +357,6 @@ export function MapaMinas() {
     }
 
     return viajes.sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
-  };
-
-  // getOTsRealizandose: cada OT con el técnico que la realiza y el rango de fechas
-  const getOTsRealizandose = (mina: MinaAgrupada): OTRealizada[] => {
-    const resultado: OTRealizada[] = [];
-
-    for (const ot of mina.otsRealizandose) {
-      const tecnicosOT: Record<string, { tecnico: Tecnico; fechaInicio: string; fechaFin: string }> = {};
-
-      for (const e of Object.values(cronograma)) {
-        if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
-        if (!actividadesRojas.has(e.actividad)) continue;
-        if (!e.ots_asignadas || e.ots_asignadas === "—") continue;
-
-        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
-        if (!codigos.includes(ot.codigo)) continue;
-
-        const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
-        if (!tecnico || !tecnico.activo) continue;
-
-        if (!tecnicosOT[tecnico.id]) {
-          tecnicosOT[tecnico.id] = { tecnico, fechaInicio: e.fecha, fechaFin: e.fecha };
-        } else {
-          if (e.fecha < tecnicosOT[tecnico.id].fechaInicio) tecnicosOT[tecnico.id].fechaInicio = e.fecha;
-          if (e.fecha > tecnicosOT[tecnico.id].fechaFin) tecnicosOT[tecnico.id].fechaFin = e.fecha;
-        }
-      }
-
-      resultado.push({ ot, tecnicos: Object.values(tecnicosOT) });
-    }
-
-    return resultado;
   };
 
   const handleToggleVisibleSede = async (nombre: string) => {
@@ -417,7 +421,6 @@ export function MapaMinas() {
       marker.on("click", () => {
         setSelectedMina(mina);
         setOtsAsociadasExpandidas(false);
-        setOtsRealizandoseExpandidas(false);
       });
       markersRef.current.push(marker);
     }
@@ -428,7 +431,6 @@ export function MapaMinas() {
     mapRef.current.flyTo([mina.coord.lat, mina.coord.lng], 8, { duration: 1.2 });
     setSelectedMina(mina);
     setOtsAsociadasExpandidas(false);
-    setOtsRealizandoseExpandidas(false);
   };
 
   const getIniciales = (nombre: string) => {
@@ -562,7 +564,7 @@ export function MapaMinas() {
                   <span className="text-gray-400">Total: {selectedMina.total}</span>
                 </div>
 
-                {/* Técnicos en sede (agrupados por viaje/subida, solo actividades rojas) */}
+                {/* Técnicos en sede (agrupados por viaje/subida, con OTs realizadas inline) */}
                 {(() => {
                   const viajes = getTecnicosEnMina(selectedMina);
                   const plural = viajes.length !== 1 ? 's' : '';
@@ -574,25 +576,38 @@ export function MapaMinas() {
                       <div className="space-y-1 mb-3">
                         {viajes.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay técnicos en estas fechas</p>}
                         {viajes.map((v, i) => (
-                          <div key={`${v.tecnico.id}-${i}`} className="flex items-center gap-2 p-1 bg-gray-50 rounded">
-                            <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
-                              {v.tecnico.foto_url ? (
-                                <img src={v.tecnico.foto_url} alt={v.tecnico.nombre} className="w-full h-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold text-gray-500">{getIniciales(v.tecnico.nombre)}</div>
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-semibold text-gray-900 truncate">{v.tecnico.nombre}</div>
-                              <div className="text-[10px] text-gray-500 truncate">
-                                <span className="text-[#E91E63] font-semibold">OT: {Array.from(v.otsRealizadas).join(", ")}</span>
-                                <span className="mx-1">·</span>
-                                <span>{Array.from(v.actividades).join(", ")}</span>
+                          <div key={`${v.tecnico.id}-${i}`} className="p-1.5 bg-gray-50 rounded">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
+                                {v.tecnico.foto_url ? (
+                                  <img src={v.tecnico.foto_url} alt={v.tecnico.nombre} className="w-full h-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-[8px] font-bold text-gray-500">{getIniciales(v.tecnico.nombre)}</div>
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-semibold text-gray-900 truncate">{v.tecnico.nombre}</div>
+                                <div className="text-[10px] text-gray-500 truncate">
+                                  {Array.from(v.actividades).join(", ")}
+                                </div>
+                              </div>
+                              <div className="text-[10px] text-gray-600 shrink-0 font-medium">
+                                {v.fechaInicio === v.fechaFin ? fmtFecha(v.fechaInicio) : `${fmtFecha(v.fechaInicio)} → ${fmtFecha(v.fechaFin)}`}
                               </div>
                             </div>
-                            <div className="text-[10px] text-gray-600 shrink-0 font-medium">
-                              {v.fechaInicio === v.fechaFin ? fmtFecha(v.fechaInicio) : `${fmtFecha(v.fechaInicio)} → ${fmtFecha(v.fechaFin)}`}
-                            </div>
+                            {v.otsRealizadas.size > 0 && (
+                              <div className="mt-1 pl-9 flex flex-wrap gap-1">
+                                {Array.from(v.otsRealizadas).map(cod => {
+                                  const ot = otMap[cod];
+                                  const color = getEstadoColor(ot?.estado || "");
+                                  return (
+                                    <span key={cod} className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold ${color}`}>
+                                      {cod}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -600,45 +615,8 @@ export function MapaMinas() {
                   );
                 })()}
 
-                {/* OTs que se están realizando (con OT + técnico + fecha) */}
-                <div className="text-[10px] font-bold text-[#E91E63] uppercase mb-1 flex items-center justify-between">
-                  <span>OTs que se están realizando ({selectedMina.otsRealizandose.length}):</span>
-                  <button onClick={() => setOtsRealizandoseExpandidas(!otsRealizandoseExpandidas)} className="p-0.5 hover:bg-gray-200 rounded">
-                    {otsRealizandoseExpandidas ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  </button>
-                </div>
-                {otsRealizandoseExpandidas && (
-                  <div className="space-y-1 mb-3">
-                    {selectedMina.otsRealizandose.length === 0 && <p className="text-[10px] text-gray-400 italic">No hay OTs en realización en estas fechas</p>}
-                    {(() => {
-                      const otsRealizandose = getOTsRealizandose(selectedMina);
-                      return otsRealizandose.map(({ ot, tecnicos }) => {
-                        const color = getEstadoColor(ot.estado);
-                        return (
-                          <div key={ot.codigo} className="p-1.5 rounded border border-[#E91E63]/30 bg-pink-50/50 hover:bg-pink-50">
-                            <div className="flex items-center gap-2">
-                              <div className="text-[10px] font-mono font-bold text-gray-900 w-24 truncate">{ot.codigo}</div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[11px] text-gray-900 truncate">{ot.cliente}</div>
-                              </div>
-                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${color}`}>{ot.estado || "—"}</span>
-                            </div>
-                            {tecnicos.map(({ tecnico, fechaInicio, fechaFin }) => (
-                              <div key={tecnico.id} className="mt-1 flex items-center gap-1 text-[10px] text-gray-600 pl-1">
-                                <span className="font-semibold text-gray-900">{tecnico.nombre}</span>
-                                <span className="text-gray-400">·</span>
-                                <span>{fechaInicio === fechaFin ? fmtFecha(fechaInicio) : `${fmtFecha(fechaInicio)} → ${fmtFecha(fechaFin)}`}</span>
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                )}
-
                 {/* OTs asociadas a la sede (TODAS, sin filtro de fechas) */}
-                <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center justify-between">
+                <div className="text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center justify-between mt-3">
                   <span>OTs asociadas a la sede ({selectedMina.ots.length}):</span>
                   <button onClick={() => setOtsAsociadasExpandidas(!otsAsociadasExpandidas)} className="p-0.5 hover:bg-gray-200 rounded">
                     {otsAsociadasExpandidas ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
