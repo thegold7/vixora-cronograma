@@ -141,6 +141,7 @@ interface AppState {
   agregarSubDocumento: (habilitacionId: string, sub: Omit<SubDocumento, "id">) => Promise<boolean>;
   actualizarSubDocumento: (id: string, newData: Partial<SubDocumento>) => Promise<boolean>;
   eliminarSubDocumento: (id: string) => Promise<boolean>;
+  toggleContabilizarHabilitacion: (id: string, contabilizar: boolean, es_subdoc: boolean) => Promise<boolean>;
   sincronizarHabilitacionesExcel: () => Promise<boolean>;
   setHabilitaciones: (habs: Habilitacion[]) => void;
 
@@ -148,6 +149,7 @@ interface AppState {
   agregarTecnico: (t: { id: string; cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string }) => Promise<boolean>;
   actualizarTecnico: (id: string, newData: { cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string }) => Promise<boolean>;
   eliminarTecnicoLogico: (id: string) => Promise<boolean>;
+  reactivarTecnico: (id: string) => Promise<boolean>;
   sincronizarTecnicosExcel: () => Promise<boolean>;
 }
 
@@ -820,6 +822,27 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  toggleContabilizarHabilitacion: async (id, contabilizar, es_subdoc) => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "toggle_contabilizar", id, contabilizar, es_subdoc }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast(`Documento ${contabilizar ? "contabilizado" : "excluido"}`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al cambiar contabilización",
+        "error"
+      );
+      return false;
+    }
+  },
+
   sincronizarHabilitacionesExcel: async () => {
     try {
       const res = await fetch("/api/habilitaciones", {
@@ -845,7 +868,6 @@ export const useStore = create<AppState>((set, get) => ({
   // ===== Técnicos CRUD =====
   agregarTecnico: async (t) => {
     try {
-      // Llamada al endpoint de técnicos (lo crearemos en siguiente archivo)
       const res = await fetch("/api/tecnico", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -907,8 +929,29 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  reactivarTecnico: async (id) => {
+    try {
+      // Reusa el toggle endpoint con activo=true
+      const res = await fetch("/api/tecnico/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tecnico_id: id, activo: true }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast("Técnico reactivado", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al reactivar técnico",
+        "error"
+      );
+      return false;
+    }
+  },
+
   sincronizarTecnicosExcel: async () => {
-    // Para sincronizar la tabla local al Excel, reescribimos la hoja Tecnicos.
     try {
       const res = await fetch("/api/tecnico", {
         method: "POST",
