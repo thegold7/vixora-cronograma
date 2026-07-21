@@ -12,6 +12,7 @@ import { TecnicosManager } from "@/components/vixora/TecnicosManager";
 import { Estadisticas } from "@/components/vixora/Estadisticas";
 import { MapaMinas } from "@/components/vixora/MapaMinas";
 import { AdminPanel } from "@/components/vixora/AdminPanel";
+import { HabilitacionesPanel } from "@/components/vixora/HabilitacionesPanel";
 import { useEffect, useState, useRef } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -36,7 +37,7 @@ export function VixoraApp() {
     showToast,
   } = useStore();
 
-  const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas" | "mapa" | "admin">("cronograma");
+  const [seccion, setSeccion] = useState<"cronograma" | "tecnicos" | "estadisticas" | "mapa" | "habilitaciones" | "admin">("cronograma");
 
   const calendarioRef = useRef<HTMLDivElement>(null);
 
@@ -161,6 +162,10 @@ export function VixoraApp() {
 
               {seccion === "tecnicos" && (
                 <TecnicosManager tecnicos={tecnicos} modoAcceso={modoAcceso} />
+              )}
+
+              {seccion === "habilitaciones" && (
+                <HabilitacionesPanel tecnicos={tecnicos} ots={ots} modoAcceso={modoAcceso} />
               )}
 
               {seccion === "estadisticas" && (
