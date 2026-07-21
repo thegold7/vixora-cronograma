@@ -5,8 +5,6 @@ import { VIXORA_COLORS } from "@/lib/types";
 import { Calendar, Users, BarChart3, Map, Shield, Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil, Database } from "lucide-react";
 import { useState } from "react";
 
-const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-
 interface Props {
   onNavigate: (seccion: "cronograma" | "tecnicos" | "estadisticas" | "mapa" | "habilitaciones" | "admin") => void;
   seccionActual: "cronograma" | "tecnicos" | "estadisticas" | "mapa" | "habilitaciones" | "admin";
@@ -21,6 +19,9 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
     await regenerarVisual(fechaActual.getFullYear(), fechaActual.getMonth() + 1);
     setRegenerando(false);
   };
+
+  // FIX: Lector solo ve Cronograma y Mapa Minas
+  const esEditor = modoAcceso === "editor";
 
   return (
     <aside
@@ -47,37 +48,41 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
           onClick={() => onNavigate("cronograma")}
         />
         <SidebarButton
-          icon={<Users size={18} />}
-          label="Técnicos"
-          active={seccionActual === "tecnicos"}
-          onClick={() => onNavigate("tecnicos")}
-        />
-        <SidebarButton
-          icon={<Shield size={18} />}
-          label="Habilitaciones"
-          active={seccionActual === "habilitaciones"}
-          onClick={() => onNavigate("habilitaciones")}
-          highlight={seccionActual === "habilitaciones"}
-        />
-        <SidebarButton
           icon={<Map size={18} />}
           label="Mapa Minas"
           active={seccionActual === "mapa"}
           onClick={() => onNavigate("mapa")}
         />
-        <SidebarButton
-          icon={<BarChart3 size={18} />}
-          label="Estadísticas"
-          active={seccionActual === "estadisticas"}
-          onClick={() => onNavigate("estadisticas")}
-        />
-        {modoAcceso === "editor" && (
-          <SidebarButton
-            icon={<Database size={18} />}
-            label="Admin"
-            active={seccionActual === "admin"}
-            onClick={() => onNavigate("admin")}
-          />
+
+        {/* FIX: Estas opciones solo para editor */}
+        {esEditor && (
+          <>
+            <SidebarButton
+              icon={<Users size={18} />}
+              label="Técnicos"
+              active={seccionActual === "tecnicos"}
+              onClick={() => onNavigate("tecnicos")}
+            />
+            <SidebarButton
+              icon={<Shield size={18} />}
+              label="Habilitaciones"
+              active={seccionActual === "habilitaciones"}
+              onClick={() => onNavigate("habilitaciones")}
+              highlight={seccionActual === "habilitaciones"}
+            />
+            <SidebarButton
+              icon={<BarChart3 size={18} />}
+              label="Estadísticas"
+              active={seccionActual === "estadisticas"}
+              onClick={() => onNavigate("estadisticas")}
+            />
+            <SidebarButton
+              icon={<Database size={18} />}
+              label="Admin"
+              active={seccionActual === "admin"}
+              onClick={() => onNavigate("admin")}
+            />
+          </>
         )}
       </nav>
 
@@ -90,7 +95,7 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
             active={false}
             onClick={toggleMostrarDetalles}
           />
-          {modoAcceso === "editor" && (
+          {esEditor && (
             <SidebarButton
               icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />}
               label={regenerando ? "Actualizando..." : "Actualizar Excel visual"}
@@ -103,7 +108,7 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
 
       {/* Auth abajo */}
       <div className="p-2 border-t border-white/10">
-        {modoAcceso === "editor" ? (
+        {esEditor ? (
           <>
             <div className="hidden lg:flex items-center gap-2 px-2 py-1 mb-1 text-xs text-green-400">
               <Pencil size={14} />
