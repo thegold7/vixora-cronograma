@@ -12,6 +12,8 @@ import type {
   VistaCalendario,
   ModoAcceso,
   ColorActividad,
+  Habilitacion,
+  SubDocumento,
 } from "@/lib/types";
 
 export interface CronogramaMap {
@@ -34,6 +36,7 @@ interface AppState {
   ots: OT[];
   actividades: Actividad[];
   cronograma: CronogramaMap;
+  habilitaciones: Habilitacion[];
   modoAcceso: ModoAcceso;
   cargando: boolean;
   actualizando: boolean;
@@ -129,6 +132,23 @@ interface AppState {
   limpiarClipboard: () => void;
 
   setModalExportarAbierto: (b: boolean) => void;
+
+  // ===== Habilitaciones =====
+  cargarHabilitaciones: () => Promise<void>;
+  agregarHabilitacion: (h: Omit<Habilitacion, "id">) => Promise<boolean>;
+  actualizarHabilitacion: (id: string, newData: Partial<Habilitacion>) => Promise<boolean>;
+  eliminarHabilitacion: (id: string) => Promise<boolean>;
+  agregarSubDocumento: (habilitacionId: string, sub: Omit<SubDocumento, "id">) => Promise<boolean>;
+  actualizarSubDocumento: (id: string, newData: Partial<SubDocumento>) => Promise<boolean>;
+  eliminarSubDocumento: (id: string) => Promise<boolean>;
+  sincronizarHabilitacionesExcel: () => Promise<boolean>;
+  setHabilitaciones: (habs: Habilitacion[]) => void;
+
+  // ===== Técnicos CRUD =====
+  agregarTecnico: (t: { id: string; cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string }) => Promise<boolean>;
+  actualizarTecnico: (id: string, newData: { cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string }) => Promise<boolean>;
+  eliminarTecnicoLogico: (id: string) => Promise<boolean>;
+  sincronizarTecnicosExcel: () => Promise<boolean>;
 }
 
 export function formatFechaISO(d: Date): string {
@@ -146,6 +166,7 @@ export const useStore = create<AppState>((set, get) => ({
   ots: [],
   actividades: [],
   cronograma: {},
+  habilitaciones: [],
   modoAcceso: "lector",
   cargando: true,
   actualizando: false,
@@ -657,6 +678,255 @@ export const useStore = create<AppState>((set, get) => ({
   limpiarClipboard: () => set({ clipboard: null, pegarMode: false }),
 
   setModalExportarAbierto: (b) => set({ modalExportarAbierto: b }),
+
+  // ===== Habilitaciones =====
+  cargarHabilitaciones: async () => {
+    try {
+      const res = await fetch("/api/habilitaciones", { cache: "no-store" });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      set({ habilitaciones: json.data });
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al cargar habilitaciones",
+        "error"
+      );
+    }
+  },
+
+  agregarHabilitacion: async (h) => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar", habilitacion: h }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast("Habilitación agregada", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al agregar habilitación",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  actualizarHabilitacion: async (id, newData) => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "actualizar", id, newData }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast("Habilitación actualizada", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al actualizar habilitación",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  eliminarHabilitacion: async (id) => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar", id }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast("Habilitación eliminada", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al eliminar habilitación",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  agregarSubDocumento: async (habilitacionId, sub) => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar_subdoc", habilitacionId, sub }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast("Sub-documento agregado", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al agregar sub-documento",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  actualizarSubDocumento: async (id, newData) => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "actualizar_subdoc", id, newData }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast("Sub-documento actualizado", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al actualizar sub-documento",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  eliminarSubDocumento: async (id) => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar_subdoc", id }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast("Sub-documento eliminado", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al eliminar sub-documento",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  sincronizarHabilitacionesExcel: async () => {
+    try {
+      const res = await fetch("/api/habilitaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "sincronizar", habilitaciones: get().habilitaciones }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      get().showToast(`Excel sincronizado (${json.data.count} habilitaciones)`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al sincronizar Excel",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  setHabilitaciones: (habs) => set({ habilitaciones: habs }),
+
+  // ===== Técnicos CRUD =====
+  agregarTecnico: async (t) => {
+    try {
+      // Llamada al endpoint de técnicos (lo crearemos en siguiente archivo)
+      const res = await fetch("/api/tecnico", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar", tecnico: t }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast(`Técnico ${t.nombre} agregado`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al agregar técnico",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  actualizarTecnico: async (id, newData) => {
+    try {
+      const res = await fetch("/api/tecnico", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "actualizar", id, newData }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast("Técnico actualizado", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al actualizar técnico",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  eliminarTecnicoLogico: async (id) => {
+    try {
+      const res = await fetch("/api/tecnico", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar", id }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast("Técnico marcado como inactivo", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al eliminar técnico",
+        "error"
+      );
+      return false;
+    }
+  },
+
+  sincronizarTecnicosExcel: async () => {
+    // Para sincronizar la tabla local al Excel, reescribimos la hoja Tecnicos.
+    try {
+      const res = await fetch("/api/tecnico", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "sincronizar", tecnicos: get().tecnicos }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      get().showToast(`Excel sincronizado (${json.data.count} técnicos)`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : "Error al sincronizar Excel",
+        "error"
+      );
+      return false;
+    }
+  },
 }));
 
 export function getColorActividad(
