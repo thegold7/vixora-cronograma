@@ -14,6 +14,8 @@ import type {
   Actividad,
   EntradaCronograma,
   Sede,
+  Habilitacion,
+  SubDocumento,
 } from "./types";
 
 let client: sheets_v4.Sheets | null = null;
@@ -276,7 +278,7 @@ export async function deleteEntradaCronograma(
 }
 
 // ============================================================
-// ESCRITURA — TÉCNICOS (toggle activo/inactivo)
+// ESCRITURA — TÉCNICOS (toggle activo/inactivo, crear, eliminar)
 // ============================================================
 export async function toggleTecnicoActivo(
   tecnicoId: string,
@@ -293,6 +295,94 @@ export async function toggleTecnicoActivo(
     range: `Tecnicos!G${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[value]] },
+  });
+  return { ok: true };
+}
+
+export async function addTecnico(tecnico: {
+  id: string;
+  cargo: string;
+  nombre: string;
+  correo: string;
+  codigo_sap: string;
+  foto_url?: string;
+}): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getTecnicos();
+  if (all.some((t) => t.id === tecnico.id)) {
+    throw new Error(`Ya existe un técnico con ID ${tecnico.id}`);
+  }
+  const values = [[
+    tecnico.id,
+    tecnico.cargo,
+    tecnico.nombre,
+    tecnico.correo,
+    tecnico.codigo_sap,
+    "Activo",
+    "TRUE",
+    tecnico.foto_url || "",
+  ]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: "Tecnicos!A:H",
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+  return { ok: true };
+}
+
+export async function updateTecnico(
+  tecnicoId: string,
+  newData: {
+    cargo: string;
+    nombre: string;
+    correo: string;
+    codigo_sap: string;
+    foto_url?: string;
+  }
+): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getTecnicos();
+  const idx = all.findIndex((t) => t.id === tecnicoId);
+  if (idx < 0) throw new Error(`Técnico ${tecnicoId} no encontrado`);
+  const rowNumber = idx + 2;
+  const existing = all[idx];
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `Tecnicos!A${rowNumber}:H${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[
+        existing.id,
+        newData.cargo,
+        newData.nombre,
+        newData.correo,
+        newData.codigo_sap,
+        existing.estado,
+        existing.activo ? "TRUE" : "FALSE",
+        newData.foto_url || "",
+      ]],
+    },
+  });
+  return { ok: true };
+}
+
+export async function deleteTecnicoLogico(
+  tecnicoId: string
+): Promise<{ ok: true }> {
+  // Eliminación lógica: marcar activo=FALSE y estado=Inactivo
+  const sheets = getClient();
+  const all = await getTecnicos();
+  const idx = all.findIndex((t) => t.id === tecnicoId);
+  if (idx < 0) throw new Error(`Técnico ${tecnicoId} no encontrado`);
+  const rowNumber = idx + 2;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `Tecnicos!F${rowNumber}:G${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["Inactivo", "FALSE"]] },
   });
   return { ok: true };
 }
@@ -316,7 +406,6 @@ export async function updateOtEstado(
     spreadsheetId: getSheetId(),
     range: `OTs!D${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    // FIX: preservar visible_mapa (columna F).
     requestBody: { values: [[estadoUpper, activo, all[idx].visible_mapa !== false ? "TRUE" : "FALSE"]] },
   });
   return { ok: true };
@@ -367,7 +456,6 @@ export async function updateOt(
   const rowNumber = idx + 2;
   const estadoUpper = estado.toUpperCase();
   const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
-  // FIX: preservar visible_mapa (columna F). Si no había, default TRUE.
   const visibleActual = all[idx].visible_mapa !== false ? "TRUE" : "FALSE";
 
   await sheets.spreadsheets.values.update({
@@ -679,4 +767,463 @@ function colToLetter(col: number): string {
     col = Math.floor((col - 1) / 26);
   }
   return letter;
+}
+
+// ============================================================
+// HABILITACIONES — CRUD
+// ============================================================
+// Estructura de la hoja "Habilitaciones" (plana):
+//   A: id                (H0001, SD0001 para sub-docs)
+//   B: tecnico_id
+//   C: ot_codigo
+//   D: sede_nombre
+//   E: documento_nombre
+//   F: fecha_vencimiento  (vacío si tiene sub_documentos)
+//   G: enlace_url
+//   H: notas
+//   I: parent_id          (vacío si es documento padre; "Hxxxx" si es sub-doc)
+//   J: es_subdoc          ("TRUE" / "FALSE")
+// ============================================================
+
+export async function getHabilitaciones(): Promise<Habilitacion[]> {
+  try {
+    const sheets = getClient();
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: getSheetId(),
+      range: "Habilitaciones!A2:J",
+    });
+    const rows = (res.data.values ?? []) as string[][];
+
+    // Filas válidas
+    const validRows = rows.filter((r) => r.length > 0 && r.some((c) => c && c.trim() !== ""));
+
+    // Separar padres y sub-docs
+    const padres: Habilitacion[] = [];
+    const subDocs: SubDocumento[] = [];
+
+    for (const r of validRows) {
+      const id = r[0] ?? "";
+      const esSubdoc = (r[9] ?? "FALSE").toUpperCase() === "TRUE";
+      if (esSubdoc) {
+        subDocs.push({
+          id,
+          nombre: r[4] ?? "",
+          fecha_vencimiento: r[5] ?? "",
+          enlace_url: r[6] ?? "",
+          notas: r[7] ?? "",
+          // parent_id se usa para asociar
+        });
+        // Guardamos parent_id en una prop temporal usando casting
+        (subDocs[subDocs.length - 1] as any)._parent_id = r[8] ?? "";
+      } else {
+        padres.push({
+          id,
+          tecnico_id: r[1] ?? "",
+          ot_codigo: r[2] ?? "",
+          sede_nombre: r[3] ?? "",
+          documento_nombre: r[4] ?? "",
+          fecha_vencimiento: r[5] || undefined,
+          enlace_url: r[6] || undefined,
+          notas: r[7] || undefined,
+          sub_documentos: [],
+        });
+      }
+    }
+
+    // Asociar sub-docs a sus padres
+    for (const sub of subDocs) {
+      const parentId = (sub as any)._parent_id as string;
+      const padre = padres.find((p) => p.id === parentId);
+      if (padre) {
+        delete (sub as any)._parent_id;
+        if (!padre.sub_documentos) padre.sub_documentos = [];
+        padre.sub_documentos.push(sub);
+      }
+    }
+
+    return padres;
+  } catch {
+    return [];
+  }
+}
+
+async function getNextHabilitacionId(): Promise<string> {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A2:A",
+  });
+  const rows = (res.data.values ?? []) as string[][];
+  let maxH = 0;
+  let maxSD = 0;
+  for (const r of rows) {
+    const id = r[0] ?? "";
+    const mH = id.match(/^H(\d+)$/);
+    if (mH) maxH = Math.max(maxH, parseInt(mH[1], 10));
+    const mSD = id.match(/^SD(\d+)$/);
+    if (mSD) maxSD = Math.max(maxSD, parseInt(mSD[1], 10));
+  }
+  return `H${String(maxH + 1).padStart(4, "0")}`;
+}
+
+async function getNextSubDocId(): Promise<string> {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A2:A",
+  });
+  const rows = (res.data.values ?? []) as string[][];
+  let maxSD = 0;
+  for (const r of rows) {
+    const id = r[0] ?? "";
+    const mSD = id.match(/^SD(\d+)$/);
+    if (mSD) maxSD = Math.max(maxSD, parseInt(mSD[1], 10));
+  }
+  return `SD${String(maxSD + 1).padStart(4, "0")}`;
+}
+
+export async function addHabilitacion(h: Omit<Habilitacion, "id">): Promise<{ ok: true; id: string }> {
+  const sheets = getClient();
+  const newId = await getNextHabilitacionId();
+
+  // Insertar padre
+  const values = [[
+    newId,
+    h.tecnico_id,
+    h.ot_codigo,
+    h.sede_nombre,
+    h.documento_nombre,
+    h.fecha_vencimiento || "",
+    h.enlace_url || "",
+    h.notas || "",
+    "",   // parent_id vacío para padre
+    "FALSE",
+  ]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A:J",
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+
+  // Insertar sub-documentos si tiene
+  if (h.sub_documentos && h.sub_documentos.length > 0) {
+    const subValues: string[][] = [];
+    for (const sub of h.sub_documentos) {
+      const subId = await getNextSubDocId();
+      subValues.push([
+        subId,
+        h.tecnico_id,
+        h.ot_codigo,
+        h.sede_nombre,
+        sub.nombre,
+        sub.fecha_vencimiento,
+        sub.enlace_url || "",
+        sub.notas || "",
+        newId,    // parent_id
+        "TRUE",
+      ]);
+    }
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: getSheetId(),
+      range: "Habilitaciones!A:J",
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: subValues },
+    });
+  }
+
+  return { ok: true, id: newId };
+}
+
+export async function updateHabilitacion(
+  habilitacionId: string,
+  newData: Partial<Habilitacion>
+): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getHabilitaciones();
+  const idx = all.findIndex((h) => h.id === habilitacionId);
+  if (idx < 0) throw new Error(`Habilitación ${habilitacionId} no encontrada`);
+
+  // Buscar la fila física en el Excel (escaneando columna A)
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A2:A",
+  });
+  const rows = (res.data.values ?? []) as string[][];
+  let rowNumber = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === habilitacionId) {
+      rowNumber = i + 2; // +1 header, +1 index 0
+      break;
+    }
+  }
+  if (rowNumber < 0) throw new Error(`Fila no encontrada para ${habilitacionId}`);
+
+  const existing = all[idx];
+  const updated: Habilitacion = {
+    ...existing,
+    ...newData,
+    id: habilitacionId,
+  };
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `Habilitaciones!A${rowNumber}:H${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[
+        habilitacionId,
+        updated.tecnico_id,
+        updated.ot_codigo,
+        updated.sede_nombre,
+        updated.documento_nombre,
+        updated.fecha_vencimiento || "",
+        updated.enlace_url || "",
+        updated.notas || "",
+      ]],
+    },
+  });
+
+  return { ok: true };
+}
+
+export async function deleteHabilitacion(habilitacionId: string): Promise<{ ok: true }> {
+  // Reescribir toda la hoja sin el padre ni sus sub-docs
+  const sheets = getClient();
+  const all = await getHabilitaciones();
+  const filtered = all.filter((h) => h.id !== habilitacionId);
+
+  const header = [["id", "tecnico_id", "ot_codigo", "sede_nombre", "documento_nombre", "fecha_vencimiento", "enlace_url", "notas", "parent_id", "es_subdoc"]];
+  const rows: string[][] = [];
+
+  for (const h of filtered) {
+    rows.push([
+      h.id,
+      h.tecnico_id,
+      h.ot_codigo,
+      h.sede_nombre,
+      h.documento_nombre,
+      h.fecha_vencimiento || "",
+      h.enlace_url || "",
+      h.notas || "",
+      "",
+      "FALSE",
+    ]);
+    if (h.sub_documentos) {
+      for (const sub of h.sub_documentos) {
+        rows.push([
+          sub.id,
+          h.tecnico_id,
+          h.ot_codigo,
+          h.sede_nombre,
+          sub.nombre,
+          sub.fecha_vencimiento,
+          sub.enlace_url || "",
+          sub.notas || "",
+          h.id,
+          "TRUE",
+        ]);
+      }
+    }
+  }
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A1:Z",
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A1",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [...header, ...rows] },
+  });
+
+  return { ok: true };
+}
+
+export async function addSubDocumento(
+  habilitacionId: string,
+  sub: Omit<SubDocumento, "id">
+): Promise<{ ok: true; id: string }> {
+  const sheets = getClient();
+  const all = await getHabilitaciones();
+  const padre = all.find((h) => h.id === habilitacionId);
+  if (!padre) throw new Error(`Habilitación ${habilitacionId} no encontrada`);
+
+  const newId = await getNextSubDocId();
+  const values = [[
+    newId,
+    padre.tecnico_id,
+    padre.ot_codigo,
+    padre.sede_nombre,
+    sub.nombre,
+    sub.fecha_vencimiento,
+    sub.enlace_url || "",
+    sub.notas || "",
+    habilitacionId,
+    "TRUE",
+  ]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A:J",
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+  return { ok: true, id: newId };
+}
+
+export async function updateSubDocumento(
+  subDocId: string,
+  newData: Partial<SubDocumento>
+): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A2:A",
+  });
+  const rows = (res.data.values ?? []) as string[][];
+  let rowNumber = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === subDocId) {
+      rowNumber = i + 2;
+      break;
+    }
+  }
+  if (rowNumber < 0) throw new Error(`Fila no encontrada para sub-doc ${subDocId}`);
+
+  // Leer fila actual
+  const rowRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: `Habilitaciones!A${rowNumber}:J${rowNumber}`,
+  });
+  const currentRow = (rowRes.data.values ?? [[]])[0] as string[];
+  const current = currentRow.length >= 10 ? currentRow : [...currentRow, ...Array(10 - currentRow.length).fill("")];
+
+  // Solo actualizamos nombre (E), fecha (F), enlace (G), notas (H)
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: `Habilitaciones!E${rowNumber}:H${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[
+        newData.nombre ?? current[4],
+        newData.fecha_vencimiento ?? current[5],
+        newData.enlace_url ?? current[6],
+        newData.notas ?? current[7],
+      ]],
+    },
+  });
+
+  return { ok: true };
+}
+
+export async function deleteSubDocumento(subDocId: string): Promise<{ ok: true }> {
+  // Reescribir toda la hoja sin ese sub-doc
+  const sheets = getClient();
+  const all = await getHabilitaciones();
+
+  const header = [["id", "tecnico_id", "ot_codigo", "sede_nombre", "documento_nombre", "fecha_vencimiento", "enlace_url", "notas", "parent_id", "es_subdoc"]];
+  const rows: string[][] = [];
+
+  for (const h of all) {
+    rows.push([
+      h.id,
+      h.tecnico_id,
+      h.ot_codigo,
+      h.sede_nombre,
+      h.documento_nombre,
+      h.fecha_vencimiento || "",
+      h.enlace_url || "",
+      h.notas || "",
+      "",
+      "FALSE",
+    ]);
+    if (h.sub_documentos) {
+      for (const sub of h.sub_documentos) {
+        if (sub.id === subDocId) continue;  // omitir
+        rows.push([
+          sub.id,
+          h.tecnico_id,
+          h.ot_codigo,
+          h.sede_nombre,
+          sub.nombre,
+          sub.fecha_vencimiento,
+          sub.enlace_url || "",
+          sub.notas || "",
+          h.id,
+          "TRUE",
+        ]);
+      }
+    }
+  }
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A1:Z",
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A1",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [...header, ...rows] },
+  });
+
+  return { ok: true };
+}
+
+/** Reemplaza TODA la hoja Habilitaciones (para sincronización web → Excel) */
+export async function replaceAllHabilitaciones(habilitaciones: Habilitacion[]): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const header = [["id", "tecnico_id", "ot_codigo", "sede_nombre", "documento_nombre", "fecha_vencimiento", "enlace_url", "notas", "parent_id", "es_subdoc"]];
+  const rows: string[][] = [];
+
+  for (const h of habilitaciones) {
+    rows.push([
+      h.id,
+      h.tecnico_id,
+      h.ot_codigo,
+      h.sede_nombre,
+      h.documento_nombre,
+      h.fecha_vencimiento || "",
+      h.enlace_url || "",
+      h.notas || "",
+      "",
+      "FALSE",
+    ]);
+    if (h.sub_documentos) {
+      for (const sub of h.sub_documentos) {
+        rows.push([
+          sub.id,
+          h.tecnico_id,
+          h.ot_codigo,
+          h.sede_nombre,
+          sub.nombre,
+          sub.fecha_vencimiento,
+          sub.enlace_url || "",
+          sub.notas || "",
+          h.id,
+          "TRUE",
+        ]);
+      }
+    }
+  }
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A1:Z",
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(),
+    range: "Habilitaciones!A1",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [...header, ...rows] },
+  });
+
+  return { ok: true };
 }
