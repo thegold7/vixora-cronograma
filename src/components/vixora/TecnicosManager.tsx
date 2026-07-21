@@ -2,13 +2,8 @@
 
 import { useStore } from "@/lib/store";
 import { useState, useMemo, useEffect } from "react";
-import {
-  Plus, RefreshCw, Pencil, X, Search, UserPlus,
-  ArrowUp, ArrowDown, Save,
-  calcularEstadoHabilitacion,
-  ESTADO_VISUAL, type EstadoDocumento,
-} from "@/lib/types";
-import type { Habilitacion } from "@/lib/types";
+import { Plus, RefreshCw, Pencil, X, Search, UserPlus, ArrowUp, ArrowDown, Save } from "lucide-react";
+import { calcularEstadoHabilitacion, ESTADO_VISUAL, type EstadoDocumento, type Habilitacion } from "@/lib/types";
 
 interface Props {
   tecnicos: any[];
@@ -71,16 +66,11 @@ export function TecnicosManager({ tecnicos, modoAcceso }: Props) {
     setActualizando(false);
   };
 
-  // FIX: Calcular resumen por OT para cada técnico
-  // - Habilitado totalmente: OTs donde TODOS los docs están 🟢
-  // - Habilitado parcialmente: OTs con algún 🟡 pero sin 🔴 ni ⚫
-  // - En riesgo: OTs con algún 🔴 pero sin ⚫
-  // - Inhabilitado: OTs con algún ⚫
+  // Calcular resumen por OT para cada técnico
   const calcularResumenPorTecnico = (tecId: string) => {
     const habsTec = habilitaciones.filter(h => h.tecnico_id === tecId && h.contabilizar !== false);
     if (habsTec.length === 0) return { total: 0, parcial: 0, riesgo: 0, inhabilitado: 0 };
 
-    // Agrupar por OT
     const porOt: Record<string, Habilitacion[]> = {};
     for (const h of habsTec) {
       if (!porOt[h.ot_codigo]) porOt[h.ot_codigo] = [];
@@ -237,7 +227,6 @@ export function TecnicosManager({ tecnicos, modoAcceso }: Props) {
                               >
                                 <Pencil size={14} />
                               </button>
-                              {/* FIX: Toggle con flecha verde ↑ (activo) / roja ↓ (inactivo) */}
                               <button
                                 onClick={() => handleToggleActivo(t)}
                                 className={`p-1 rounded ml-1 ${t.activo ? "text-green-600 hover:bg-green-100" : "text-red-600 hover:bg-red-100"}`}
