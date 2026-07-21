@@ -566,6 +566,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
         </div>
       </div>
 
+      
       {/* Leyenda */}
       <div className="mt-3 p-2 bg-gray-50 rounded text-[10px] text-gray-600 flex flex-wrap gap-3">
         <span className="font-bold">Estados:</span>
