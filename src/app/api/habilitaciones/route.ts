@@ -10,7 +10,8 @@
  *     - { accion: "agregar_subdoc", habilitacionId, sub }
  *     - { accion: "actualizar_subdoc", id, newData }
  *     - { accion: "eliminar_subdoc", id }
- *     - { accion: "sincronizar", habilitaciones }  ← reemplaza todo (web → Excel)
+ *     - { accion: "sincronizar", habilitaciones }
+ *     - { accion: "toggle_contabilizar", id, contabilizar, es_subdoc }
  */
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -42,7 +43,6 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  // Todas las acciones requieren modo editor
   if (!(await isEditor())) {
     return NextResponse.json(
       { ok: false, error: "No autorizado. Se requiere modo editor." },
@@ -53,7 +53,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { accion } = body;
 
-    // ---------- AGREGAR HABILITACIÓN ----------
     if (accion === "agregar") {
       const h = body.habilitacion as Omit<Habilitacion, "id">;
       if (!h || !h.tecnico_id || !h.ot_codigo || !h.documento_nombre) {
@@ -66,7 +65,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, data: { id: result.id } });
     }
 
-    // ---------- ACTUALIZAR HABILITACIÓN ----------
     if (accion === "actualizar") {
       const { id, newData } = body;
       if (!id || !newData) {
@@ -79,7 +77,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ---------- ELIMINAR HABILITACIÓN ----------
     if (accion === "eliminar") {
       const { id } = body;
       if (!id) {
@@ -92,7 +89,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ---------- AGREGAR SUB-DOCUMENTO ----------
     if (accion === "agregar_subdoc") {
       const { habilitacionId, sub } = body;
       if (!habilitacionId || !sub) {
@@ -105,7 +101,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, data: { id: result.id } });
     }
 
-    // ---------- ACTUALIZAR SUB-DOCUMENTO ----------
     if (accion === "actualizar_subdoc") {
       const { id, newData } = body;
       if (!id || !newData) {
@@ -118,7 +113,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ---------- ELIMINAR SUB-DOCUMENTO ----------
     if (accion === "eliminar_subdoc") {
       const { id } = body;
       if (!id) {
@@ -131,7 +125,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ---------- SINCRONIZAR TODO (web → Excel) ----------
     if (accion === "sincronizar") {
       const { habilitaciones } = body;
       if (!Array.isArray(habilitaciones)) {
@@ -144,8 +137,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, data: { count: habilitaciones.length } });
     }
 
+    // FIX: Nueva acción toggle_contabilizar
+    if (accion === "toggle_contabilizar") {
+      const { id, contabilizar, es_subdoc } = body;
+      if (!id || typeof contabilizar !== "boolean") {
+        return NextResponse.json(
+          { ok: false, error: "Faltan campos: id, contabilizar" },
+          { status: 400 }
+        );
+      }
+      if (es_subdoc) {
+        await updateSubDocumento(id, { contabilizar });
+      } else {
+        await updateHabilitacion(id, { contabilizar });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
     return NextResponse.json(
-      { ok: false, error: "Acción no reconocida. Usa: agregar, actualizar, eliminar, agregar_subdoc, actualizar_subdoc, eliminar_subdoc, sincronizar" },
+      { ok: false, error: "Acción no reconocida. Usa: agregar, actualizar, eliminar, agregar_subdoc, actualizar_subdoc, eliminar_subdoc, sincronizar, toggle_contabilizar" },
       { status: 400 }
     );
   } catch (err) {
