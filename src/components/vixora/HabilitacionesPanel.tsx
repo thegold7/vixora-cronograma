@@ -5,7 +5,7 @@ import { useState, useMemo, useEffect } from "react";
 import {
   Search, RefreshCw, ChevronDown, ChevronUp,
   Link as LinkIcon, Pencil, Plus, Trash2, X, Save, Copy,
-  Eye, EyeOff,
+  Eye, EyeOff, ChevronsDown, ChevronsUp,
 } from "lucide-react";
 import {
   calcularEstadoHabilitacion, calcularEstadoFecha, ESTADO_VISUAL,
@@ -31,7 +31,8 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
   const [mostrarInactivos, setMostrarInactivos] = useState(false);
   const [tecnicoSeleccionadoId, setTecnicoSeleccionadoId] = useState<string | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
-  const [sedeExpandida, setSedeExpandida] = useState<string | null>(null);
+  const [sedesExpandidasPorTecnico, setSedesExpandidasPorTecnico] = useState<Record<string, boolean>>({});
+  const [expandirTodas, setExpandirTodas] = useState(false);
   const [actualizando, setActualizando] = useState(false);
   const [filtroEstado, setFiltroEstado] = useState<EstadoDocumento | null>(null);
   const [agregandoHab, setAgregandoHab] = useState<{ tecnicoId: string; otCodigo: string } | null>(null);
@@ -57,7 +58,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return m;
   }, [ots]);
 
-  // Técnicos filtrados (sin vacíos, según inactivos y búsqueda)
   const tecnicosFiltrados = useMemo(() => {
     let result = tecnicos.filter(t => t.id && t.nombre && t.id.trim() !== "" && t.nombre.trim() !== "");
     if (!mostrarInactivos) {
@@ -66,7 +66,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return result;
   }, [tecnicos, mostrarInactivos]);
 
-  // Habilitaciones por técnico
   const habilitacionesPorTecnico = useMemo(() => {
     const m: Record<string, Habilitacion[]> = {};
     for (const h of habilitaciones) {
@@ -77,7 +76,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
   }, [habilitaciones]);
 
   // FIX: Resumen general por DOCUMENTOS (no por técnicos)
-  // Cuenta documentos individuales (no sub-docs) y guarda nombre + doc + técnico para tooltip
   const resumenGeneral = useMemo(() => {
     const conteo: Record<EstadoDocumento, Array<{ tecnico: string; documento: string; sede: string }>> = {
       habilitado: [], por_vencer: [], en_riesgo: [], vencido: [],
@@ -85,7 +83,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     for (const t of tecnicosFiltrados) {
       const habsTec = habilitacionesPorTecnico[t.id] || [];
       for (const h of habsTec) {
-        if (h.contabilizar === false) continue; // no contabilizar
+        if (h.contabilizar === false) continue;
         const estado = calcularEstadoHabilitacion(h);
         conteo[estado].push({
           tecnico: t.nombre,
@@ -97,18 +95,15 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return conteo;
   }, [tecnicosFiltrados, habilitacionesPorTecnico]);
 
-  // Aplicar búsqueda
   const tecnicosFinales = useMemo(() => {
     let result = tecnicosFiltrados;
     if (query) {
       const q = query.toLowerCase();
       result = result.filter(t => {
-        // Buscar por técnico
         const matchTecnico = t.id.toLowerCase().includes(q) ||
           t.nombre.toLowerCase().includes(q) ||
           t.cargo.toLowerCase().includes(q);
         if (matchTecnico) return true;
-        // Buscar por OT o sede
         const habsTec = habilitacionesPorTecnico[t.id] || [];
         return habsTec.some(h => {
           const ot = otMap[h.ot_codigo];
@@ -122,7 +117,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return result;
   }, [tecnicosFiltrados, query, habilitacionesPorTecnico, otMap]);
 
-  // Aplicar filtro de estado (por documento, no por estado general del técnico)
   const tecnicosConFiltro = useMemo(() => {
     if (!filtroEstado) return tecnicosFinales;
     return tecnicosFinales.filter(t => {
@@ -134,49 +128,26 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     });
   }, [tecnicosFinales, filtroEstado, habilitacionesPorTecnico]);
 
-  // Handlers
   const handleActualizarExcel = async () => {
     setActualizando(true);
     await sincronizarHabilitacionesExcel();
     setActualizando(false);
   };
 
-  const handleGuardarNuevaHab = async (tecnicoId: string, otCodigo: string) => {
-    if (!nuevaHab.documento_nombre) {
-      showToast("Nombre de documento es obligatorio", "error");
-      return;
-    }
-    const ot = otMap[otCodigo];
-    const ok = await agregarHabilitacion({
-      tecnico_id: tecnicoId,
-      ot_codigo: otCodigo,
-      sede_nombre: ot?.sede || "",
-      documento_nombre: nuevaHab.documento_nombre,
-      fecha_vencimiento: nuevaHab.fecha_vencimiento || undefined,
-      enlace_url: nuevaHab.enlace_url || undefined,
-      notas: nuevaHab.notas || undefined,
-    });
-    if (ok) {
-      setAgregandoHab(null);
-      setNuevaHab({ documento_nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" });
+  const handleToggleExpandirTodas = () => {
+    if (expandirTodas) {
+      setExpandirTodas(false);
+      setSedesExpandidasPorTecnico({});
+    } else {
+      setExpandirTodas(true);
+      const nuevas: Record<string, boolean> = {};
+      tecnicosConFiltro.forEach(t => { nuevas[t.id] = true; });
+      setSedesExpandidasPorTecnico(nuevas);
     }
   };
 
-  const handleGuardarNuevoSubDoc = async (habId: string) => {
-    if (!nuevoSubDoc.nombre || !nuevoSubDoc.fecha_vencimiento) {
-      showToast("Nombre y fecha son obligatorios", "error");
-      return;
-    }
-    const ok = await agregarSubDocumento(habId, {
-      nombre: nuevoSubDoc.nombre,
-      fecha_vencimiento: nuevoSubDoc.fecha_vencimiento,
-      enlace_url: nuevoSubDoc.enlace_url || undefined,
-      notas: nuevoSubDoc.notas || undefined,
-    });
-    if (ok) {
-      setAgregandoSubDoc(null);
-      setNuevoSubDoc({ nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" });
-    }
+  const handleToggleSedesTecnico = (tecId: string) => {
+    setSedesExpandidasPorTecnico(prev => ({ ...prev, [tecId]: !prev[tecId] }));
   };
 
   const getIniciales = (nombre: string) => {
@@ -184,7 +155,27 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return partes.length >= 2 ? (partes[0][0] + partes[1][0]).toUpperCase() : nombre.substring(0, 2).toUpperCase();
   };
 
-  // Técnico seleccionado
+  // FIX: Calcular resumen general de un técnico (suma de todos sus documentos en todas las sedes)
+  const calcularResumenTecnico = (tecId: string) => {
+    const habsTec = habilitacionesPorTecnico[tecId] || [];
+    const c: Record<EstadoDocumento, number> = { habilitado: 0, por_vencer: 0, en_riesgo: 0, vencido: 0 };
+    for (const h of habsTec) {
+      if (h.contabilizar === false) continue;
+      c[calcularEstadoHabilitacion(h)]++;
+    }
+    return c;
+  };
+
+  // Calcular resumen por sede
+  const calcularResumenSede = (habs: Habilitacion[]) => {
+    const c: Record<EstadoDocumento, number> = { habilitado: 0, por_vencer: 0, en_riesgo: 0, vencido: 0 };
+    for (const h of habs) {
+      if (h.contabilizar === false) continue;
+      c[calcularEstadoHabilitacion(h)]++;
+    }
+    return c;
+  };
+
   const tecnicoSeleccionado = tecnicoSeleccionadoId
     ? tecnicos.find(t => t.id === tecnicoSeleccionadoId)
     : null;
@@ -194,7 +185,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Columna principal: tabla */}
       <div className={`flex-1 overflow-auto ${sidebarVisible && tecnicoSeleccionado ? "max-w-[calc(100%-400px)]" : ""}`}>
         <div className="p-6 max-w-[1600px] mx-auto">
           {/* Header */}
@@ -206,18 +196,28 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
               </p>
             </div>
             {modoAcceso === "editor" && (
-              <button
-                onClick={handleActualizarExcel}
-                disabled={actualizando}
-                className="flex items-center gap-1 px-3 py-1.5 text-xs text-[#E91E63] border border-[#E91E63] rounded hover:bg-pink-50 disabled:opacity-50"
-              >
-                <RefreshCw size={14} className={actualizando ? "animate-spin" : ""} />
-                {actualizando ? "Sincronizando..." : "Actualizar Excel"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleToggleExpandirTodas}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50"
+                  title={expandirTodas ? "Contraer todas las sedes" : "Expandir todas las sedes"}
+                >
+                  {expandirTodas ? <ChevronsUp size={14} /> : <ChevronsDown size={14} />}
+                  {expandirTodas ? "Contraer todas" : "Expandir todas"}
+                </button>
+                <button
+                  onClick={handleActualizarExcel}
+                  disabled={actualizando}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs text-[#E91E63] border border-[#E91E63] rounded hover:bg-pink-50 disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={actualizando ? "animate-spin" : ""} />
+                  {actualizando ? "Sincronizando..." : "Actualizar Excel"}
+                </button>
+              </div>
             )}
           </div>
 
-          {/* FIX: Resumen general delgado (no grande) */}
+          {/* Resumen general delgado */}
           <div className="grid grid-cols-4 gap-2 mb-4">
             {(["habilitado", "por_vencer", "en_riesgo", "vencido"] as EstadoDocumento[]).map(estado => {
               const items = resumenGeneral[estado];
@@ -292,7 +292,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                   <tr>
                     <th className="px-3 py-2 text-left font-semibold text-gray-600 w-12">Foto</th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-600 min-w-[160px]">Técnico</th>
-                    <th className="px-3 py-2 text-left font-semibold text-gray-600 min-w-[300px]">Habilitaciones por Sede</th>
+                    <th className="px-3 py-2 text-left font-semibold text-gray-600 min-w-[400px]">Habilitaciones por Sede</th>
                     <th className="px-3 py-2 text-center font-semibold text-gray-600 w-32">Acciones</th>
                   </tr>
                 </thead>
@@ -304,7 +304,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                       const habsTec = habilitacionesPorTecnico[t.id] || [];
                       const isSelected = tecnicoSeleccionadoId === t.id;
 
-                      // FIX: Agrupar por sede y calcular resumen de 4 estados por sede (sin desplegar)
+                      // FIX: Agrupar por sede
                       const habsPorSede: Record<string, Habilitacion[]> = {};
                       for (const h of habsTec) {
                         const sede = h.sede_nombre || "(sin sede)";
@@ -312,15 +312,9 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                         habsPorSede[sede].push(h);
                       }
 
-                      // Resumen por sede (4 estados visibles al lado del nombre)
-                      const calcularResumenSede = (habs: Habilitacion[]) => {
-                        const c: Record<EstadoDocumento, number> = { habilitado: 0, por_vencer: 0, en_riesgo: 0, vencido: 0 };
-                        for (const h of habs) {
-                          if (h.contabilizar === false) continue;
-                          c[calcularEstadoHabilitacion(h)]++;
-                        }
-                        return c;
-                      };
+                      // FIX: Resumen general del técnico (suma de todos los documentos)
+                      const resumenGral = calcularResumenTecnico(t.id);
+                      const expandido = !!sedesExpandidasPorTecnico[t.id];
 
                       return (
                         <tr
@@ -350,29 +344,36 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                               <div className="text-[10px] text-gray-400 italic">Sin habilitaciones</div>
                             ) : (
                               <div className="space-y-1">
-                                {/* FIX: Desplegable por sede */}
+                                {/* FIX: Rectángulo "Resumen General" con 4 estados + flechita desplegable */}
                                 <button
-                                  onClick={() => setSedeExpandida(sedeExpandida === t.id ? null : t.id)}
-                                  className="flex items-center gap-1 text-[10px] text-[#E91E63] hover:underline"
+                                  onClick={() => handleToggleSedesTecnico(t.id)}
+                                  className="w-full p-2 rounded border-2 border-gray-300 bg-gray-50 hover:bg-gray-100 flex items-center justify-between"
                                 >
-                                  {sedeExpandida === t.id ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                                  {sedeExpandida === t.id ? "Contraer sedes" : `Ver ${Object.keys(habsPorSede).length} sede(s)`}
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-bold text-gray-700 uppercase">Resumen General</span>
+                                    <div className="flex gap-2 text-[10px] ml-2">
+                                      <span className="flex items-center gap-0.5" title="Habilitados">🟢 {resumenGral.habilitado}</span>
+                                      <span className="flex items-center gap-0.5" title="Por vencer">🟡 {resumenGral.por_vencer}</span>
+                                      <span className="flex items-center gap-0.5" title="En riesgo">🔴 {resumenGral.en_riesgo}</span>
+                                      <span className="flex items-center gap-0.5" title="Vencidos">⚫ {resumenGral.vencido}</span>
+                                    </div>
+                                  </div>
+                                  {expandido ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
                                 </button>
 
-                                {sedeExpandida === t.id && (
-                                  <div className="space-y-1 mt-1">
+                                {/* FIX: Al desplegar, mostrar cada sede con su resumen */}
+                                {expandido && (
+                                  <div className="space-y-1 mt-1 pl-2">
                                     {Object.entries(habsPorSede).map(([sede, habs]) => {
                                       const resumen = calcularResumenSede(habs);
                                       return (
-                                        <div key={sede} className="border border-gray-200 rounded p-1.5">
-                                          <div className="flex items-center justify-between">
-                                            <span className="text-[11px] font-bold text-gray-900">{sede}</span>
-                                            <div className="flex gap-1.5 text-[10px]">
-                                              <span title="Habilitados">🟢 {resumen.habilitado}</span>
-                                              <span title="Por vencer">🟡 {resumen.por_vencer}</span>
-                                              <span title="En riesgo">🔴 {resumen.en_riesgo}</span>
-                                              <span title="Vencidos">⚫ {resumen.vencido}</span>
-                                            </div>
+                                        <div key={sede} className="p-1.5 rounded border border-gray-200 bg-white flex items-center justify-between">
+                                          <span className="text-[11px] font-bold text-gray-900">{sede}</span>
+                                          <div className="flex gap-2 text-[10px]">
+                                            <span title="Habilitados">🟢 {resumen.habilitado}</span>
+                                            <span title="Por vencer">🟡 {resumen.por_vencer}</span>
+                                            <span title="En riesgo">🔴 {resumen.en_riesgo}</span>
+                                            <span title="Vencidos">⚫ {resumen.vencido}</span>
                                           </div>
                                         </div>
                                       );
@@ -413,7 +414,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
         </div>
       </div>
 
-      {/* FIX: Sidebar derecho del técnico seleccionado */}
+      {/* Sidebar derecho del técnico seleccionado */}
       {tecnicoSeleccionado && sidebarVisible && (
         <SidebarTecnicoHabilitaciones
           tecnico={tecnicoSeleccionado}
@@ -474,7 +475,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
 }
 
 // =============================================================
-// SUBCOMPONENTE: Sidebar derecho del técnico (con habilitaciones)
+// SUBCOMPONENTE: Sidebar derecho del técnico
 // =============================================================
 function SidebarTecnicoHabilitaciones({
   tecnico, habilitaciones, ots, modoAcceso,
@@ -514,7 +515,6 @@ function SidebarTecnicoHabilitaciones({
   const [editandoSubDoc, setEditandoSubDoc] = useState<{ id: string; sub: SubDocumento; parentId: string } | null>(null);
   const [editandoHab, setEditandoHab] = useState<Habilitacion | null>(null);
 
-  // FIX: Agrupar por sede
   const habilitacionesPorSede = useMemo(() => {
     const grupos: Record<string, Habilitacion[]> = {};
     for (const h of habilitaciones) {
@@ -531,7 +531,6 @@ function SidebarTecnicoHabilitaciones({
     return m;
   }, [ots]);
 
-  // Resumen por sede (4 estados)
   const calcularResumenSede = (habs: Habilitacion[]) => {
     const c: Record<EstadoDocumento, number> = { habilitado: 0, por_vencer: 0, en_riesgo: 0, vencido: 0 };
     for (const h of habs) {
@@ -600,7 +599,7 @@ function SidebarTecnicoHabilitaciones({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* FIX: Foto vertical más grande (rectángulo) */}
+        {/* Foto vertical + datos */}
         <div className="p-4 border-b border-gray-200 flex gap-3">
           <div className="w-24 h-32 rounded-lg overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
             {tecnico.foto_url ? (
@@ -628,7 +627,7 @@ function SidebarTecnicoHabilitaciones({
           </div>
         </div>
 
-        {/* Habilitaciones por sede (4 estados visibles sin desplegar) */}
+        {/* Habilitaciones por sede (con 4 estados visibles en el header) */}
         <div className="p-3">
           <div className="text-[10px] font-bold text-gray-500 uppercase mb-2">Habilitaciones por Sede</div>
 
@@ -663,7 +662,6 @@ function SidebarTecnicoHabilitaciones({
                     {/* Desplegar documentos */}
                     {expanded && (
                       <div className="p-2 space-y-1">
-                        {/* Agrupar por OT dentro de la sede */}
                         {Object.entries(
                           habs.reduce((acc, h) => {
                             if (!acc[h.ot_codigo]) acc[h.ot_codigo] = [];
@@ -682,122 +680,160 @@ function SidebarTecnicoHabilitaciones({
                                 {habsOt.map(h => {
                                   const estado = calcularEstadoHabilitacion(h);
                                   const visual = ESTADO_VISUAL[estado];
-                                  const isEditing = editandoHab?.id === h.id;
                                   const contab = h.contabilizar !== false;
+                                  const isEditing = editandoHab?.id === h.id;
                                   return (
                                     <div key={h.id} className="p-1.5 rounded border" style={{ borderColor: visual.border, backgroundColor: contab ? visual.bg : "#f9f9f9", opacity: contab ? 1 : 0.6 }}>
-                                      <div className="flex items-start justify-between gap-1">
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-1">
-                                            <span className="text-sm">{visual.icon}</span>
-                                            <span className="text-[11px] font-bold text-gray-900">{h.documento_nombre}</span>
-                                            {!contab && (
-                                              <span className="text-[8px] px-1 rounded bg-gray-300 text-gray-700">NO CONTAB.</span>
-                                            )}
-                                          </div>
-                                          {!h.sub_documentos?.length && h.fecha_vencimiento && (
-                                            <div className="text-[9px] text-gray-600 mt-0.5 flex items-center gap-1">
-                                              <span>📅 Vence: {h.fecha_vencimiento.split("-").reverse().join("/")}</span>
-                                            </div>
-                                          )}
-                                          {h.sub_documentos && h.sub_documentos.length > 0 && (
-                                            <div className="mt-0.5 space-y-0.5">
-                                              {h.sub_documentos.map(sub => {
-                                                const subEstado = calcularEstadoFecha(sub.fecha_vencimiento);
-                                                const subVisual = ESTADO_VISUAL[subEstado];
-                                                const subContab = sub.contabilizar !== false;
-                                                return (
-                                                  <div key={sub.id} className="flex items-center gap-1 text-[9px] pl-1" style={{ opacity: subContab ? 1 : 0.5 }}>
-                                                    <span>{subVisual.icon}</span>
-                                                    <span className="text-gray-700">{sub.nombre}</span>
-                                                    <span className="text-gray-400">·</span>
-                                                    <span className="text-gray-500">{sub.fecha_vencimiento.split("-").reverse().join("/")}</span>
-                                                    {sub.enlace_url && (
-                                                      <a href={sub.enlace_url} target="_blank" rel="noopener noreferrer" className="text-[#E91E63] hover:underline">
-                                                        <LinkIcon size={8} />
-                                                      </a>
-                                                    )}
-                                                    {modoAcceso === "editor" && (
-                                                      <>
-                                                        <button onClick={() => setEditandoSubDoc({ id: sub.id, sub, parentId: h.id })} className="text-blue-500 hover:text-blue-700">
-                                                          <Pencil size={8} />
-                                                        </button>
-                                                        <button
-                                                          onClick={() => onToggleContabilizar(sub.id, !subContab, true)}
-                                                          className={`p-0.5 rounded ${subContab ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`}
-                                                          title={subContab ? "Contabilizando — click para excluir" : "Excluido — click para contabilizar"}
-                                                        >
-                                                          {subContab ? <Eye size={9} /> : <EyeOff size={9} />}
-                                                        </button>
-                                                        <button onClick={() => onEliminarSubDoc(sub.id)} className="text-red-500 hover:text-red-700">
-                                                          <Trash2 size={8} />
-                                                        </button>
-                                                      </>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          )}
-                                          {h.enlace_url && !h.sub_documentos?.length && (
-                                            <a href={h.enlace_url} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[#E91E63] hover:underline flex items-center gap-1 mt-0.5">
-                                              <LinkIcon size={8} /> Ver documento
-                                            </a>
-                                          )}
-                                        </div>
-                                        {modoAcceso === "editor" && (
-                                          <div className="flex flex-col gap-0.5">
-                                            {/* Toggle contabilizar (documento padre) */}
-                                            <button
-                                              onClick={() => onToggleContabilizar(h.id, !contab, false)}
-                                              className={`p-0.5 rounded ${contab ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`}
-                                              title={contab ? "Contabilizando — click para excluir" : "Excluido — click para contabilizar"}
-                                            >
-                                              {contab ? <Eye size={9} /> : <EyeOff size={9} />}
-                                            </button>
-                                            <button onClick={() => setAgregandoSubDoc(h.id)} className="text-[#E91E63] hover:text-[#c2185b] p-0.5" title="Añadir sub-doc">
-                                              <Plus size={9} />
-                                            </button>
-                                            <button onClick={() => onEliminarHabilitacion(h.id)} className="text-red-500 hover:text-red-700 p-0.5" title="Eliminar">
-                                              <Trash2 size={9} />
-                                            </button>
-                                          </div>
-                                        )}
-                                      </div>
-
-                                      {/* Agregar sub-doc */}
-                                      {modoAcceso === "editor" && agregandoSubDoc === h.id && (
-                                        <div className="mt-1 p-1 bg-white rounded border border-gray-200 space-y-1">
-                                          <input type="text" placeholder="Nombre sub-doc" value={nuevoSubDoc.nombre} onChange={(e) => setNuevoSubDoc({...nuevoSubDoc, nombre: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                          <input type="date" value={nuevoSubDoc.fecha_vencimiento} onChange={(e) => setNuevoSubDoc({...nuevoSubDoc, fecha_vencimiento: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                          <input type="text" placeholder="Enlace URL (opcional)" value={nuevoSubDoc.enlace_url} onChange={(e) => setNuevoSubDoc({...nuevoSubDoc, enlace_url: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                          <div className="flex gap-1">
-                                            <button onClick={() => handleGuardarNuevoSubDoc(h.id)} className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]">Guardar</button>
-                                            <button onClick={() => { setAgregandoSubDoc(null); setNuevoSubDoc({ nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" }); }} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {/* Editar sub-doc */}
-                                      {editandoSubDoc && editandoSubDoc.parentId === h.id && h.sub_documentos?.some(s => s.id === editandoSubDoc.id) && (
-                                        <div className="mt-1 p-1 bg-white rounded border border-blue-200 space-y-1">
-                                          <div className="text-[9px] font-bold text-blue-700">Editando sub-documento</div>
-                                          <input type="text" value={editandoSubDoc.sub.nombre} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, nombre: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                          <input type="date" value={editandoSubDoc.sub.fecha_vencimiento} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, fecha_vencimiento: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                          <input type="text" placeholder="URL" value={editandoSubDoc.sub.enlace_url || ""} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, enlace_url: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                      {/* FIX: Modo edición del documento padre */}
+                                      {isEditing ? (
+                                        <div className="space-y-1">
+                                          <div className="text-[9px] font-bold text-blue-700">Editando documento</div>
+                                          <input type="text" placeholder="Nombre" value={editandoHab!.documento_nombre} onChange={(e) => setEditandoHab({...editandoHab!, documento_nombre: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                          <input type="date" value={editandoHab!.fecha_vencimiento || ""} onChange={(e) => setEditandoHab({...editandoHab!, fecha_vencimiento: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                          <input type="text" placeholder="Enlace URL" value={editandoHab!.enlace_url || ""} onChange={(e) => setEditandoHab({...editandoHab!, enlace_url: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                          <input type="text" placeholder="Notas" value={editandoHab!.notas || ""} onChange={(e) => setEditandoHab({...editandoHab!, notas: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
                                           <div className="flex gap-1">
                                             <button
                                               onClick={async () => {
-                                                await onActualizarSubDoc(editandoSubDoc.id, editandoSubDoc.sub);
-                                                setEditandoSubDoc(null);
+                                                await onActualizarHabilitacion(h.id, {
+                                                  documento_nombre: editandoHab!.documento_nombre,
+                                                  fecha_vencimiento: editandoHab!.fecha_vencimiento || undefined,
+                                                  enlace_url: editandoHab!.enlace_url || undefined,
+                                                  notas: editandoHab!.notas || undefined,
+                                                });
+                                                setEditandoHab(null);
                                               }}
-                                              className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]"
+                                              className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b] flex items-center justify-center gap-1"
                                             >
-                                              Guardar
+                                              <Save size={9} /> Guardar
                                             </button>
-                                            <button onClick={() => setEditandoSubDoc(null)} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
+                                            <button onClick={() => setEditandoHab(null)} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
                                           </div>
                                         </div>
+                                      ) : (
+                                        <>
+                                          <div className="flex items-start justify-between gap-1">
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-1">
+                                                <span className="text-sm">{visual.icon}</span>
+                                                <span className="text-[11px] font-bold text-gray-900">{h.documento_nombre}</span>
+                                                {!contab && (
+                                                  <span className="text-[8px] px-1 rounded bg-gray-300 text-gray-700">NO CONTAB.</span>
+                                                )}
+                                              </div>
+                                              {!h.sub_documentos?.length && h.fecha_vencimiento && (
+                                                <div className="text-[9px] text-gray-600 mt-0.5 flex items-center gap-1">
+                                                  <span>📅 Vence: {h.fecha_vencimiento.split("-").reverse().join("/")}</span>
+                                                </div>
+                                              )}
+                                              {h.sub_documentos && h.sub_documentos.length > 0 && (
+                                                <div className="mt-0.5 space-y-0.5">
+                                                  {h.sub_documentos.map(sub => {
+                                                    const subEstado = calcularEstadoFecha(sub.fecha_vencimiento);
+                                                    const subVisual = ESTADO_VISUAL[subEstado];
+                                                    const subContab = sub.contabilizar !== false;
+                                                    return (
+                                                      <div key={sub.id} className="flex items-center gap-1 text-[9px] pl-1" style={{ opacity: subContab ? 1 : 0.5 }}>
+                                                        <span>{subVisual.icon}</span>
+                                                        <span className="text-gray-700">{sub.nombre}</span>
+                                                        <span className="text-gray-400">·</span>
+                                                        <span className="text-gray-500">{sub.fecha_vencimiento.split("-").reverse().join("/")}</span>
+                                                        {sub.enlace_url && (
+                                                          <a href={sub.enlace_url} target="_blank" rel="noopener noreferrer" className="text-[#E91E63] hover:underline">
+                                                            <LinkIcon size={8} />
+                                                          </a>
+                                                        )}
+                                                        {modoAcceso === "editor" && (
+                                                          <>
+                                                            <button onClick={() => setEditandoSubDoc({ id: sub.id, sub, parentId: h.id })} className="text-blue-500 hover:text-blue-700">
+                                                              <Pencil size={8} />
+                                                            </button>
+                                                            <button
+                                                              onClick={() => onToggleContabilizar(sub.id, !subContab, true)}
+                                                              className={`p-0.5 rounded ${subContab ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`}
+                                                              title={subContab ? "Contabilizando — click para excluir" : "Excluido — click para contabilizar"}
+                                                            >
+                                                              {subContab ? <Eye size={9} /> : <EyeOff size={9} />}
+                                                            </button>
+                                                            <button onClick={() => onEliminarSubDoc(sub.id)} className="text-red-500 hover:text-red-700">
+                                                              <Trash2 size={8} />
+                                                            </button>
+                                                          </>
+                                                        )}
+                                                      </div>
+                                                    );
+                                                  })}
+                                                </div>
+                                              )}
+                                              {h.enlace_url && !h.sub_documentos?.length && (
+                                                <a href={h.enlace_url} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[#E91E63] hover:underline flex items-center gap-1 mt-0.5">
+                                                  <LinkIcon size={8} /> Ver documento
+                                                </a>
+                                              )}
+                                            </div>
+                                            {modoAcceso === "editor" && (
+                                              <div className="flex flex-col gap-0.5">
+                                                {/* FIX: Botón editar documento padre */}
+                                                <button
+                                                  onClick={() => setEditandoHab(h)}
+                                                  className="p-0.5 rounded text-blue-600 hover:bg-blue-100"
+                                                  title="Editar documento"
+                                                >
+                                                  <Pencil size={9} />
+                                                </button>
+                                                {/* Toggle contabilizar */}
+                                                <button
+                                                  onClick={() => onToggleContabilizar(h.id, !contab, false)}
+                                                  className={`p-0.5 rounded ${contab ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`}
+                                                  title={contab ? "Contabilizando — click para excluir" : "Excluido — click para contabilizar"}
+                                                >
+                                                  {contab ? <Eye size={9} /> : <EyeOff size={9} />}
+                                                </button>
+                                                <button onClick={() => setAgregandoSubDoc(h.id)} className="text-[#E91E63] hover:text-[#c2185b] p-0.5" title="Añadir sub-doc">
+                                                  <Plus size={9} />
+                                                </button>
+                                                <button onClick={() => onEliminarHabilitacion(h.id)} className="text-red-500 hover:text-red-700 p-0.5" title="Eliminar">
+                                                  <Trash2 size={9} />
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+
+                                          {/* Agregar sub-doc */}
+                                          {modoAcceso === "editor" && agregandoSubDoc === h.id && (
+                                            <div className="mt-1 p-1 bg-white rounded border border-gray-200 space-y-1">
+                                              <input type="text" placeholder="Nombre sub-doc" value={nuevoSubDoc.nombre} onChange={(e) => setNuevoSubDoc({...nuevoSubDoc, nombre: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <input type="date" value={nuevoSubDoc.fecha_vencimiento} onChange={(e) => setNuevoSubDoc({...nuevoSubDoc, fecha_vencimiento: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <input type="text" placeholder="Enlace URL (opcional)" value={nuevoSubDoc.enlace_url} onChange={(e) => setNuevoSubDoc({...nuevoSubDoc, enlace_url: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <div className="flex gap-1">
+                                                <button onClick={() => handleGuardarNuevoSubDoc(h.id)} className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]">Guardar</button>
+                                                <button onClick={() => { setAgregandoSubDoc(null); setNuevoSubDoc({ nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" }); }} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {/* Editar sub-doc */}
+                                          {editandoSubDoc && editandoSubDoc.parentId === h.id && h.sub_documentos?.some(s => s.id === editandoSubDoc.id) && (
+                                            <div className="mt-1 p-1 bg-white rounded border border-blue-200 space-y-1">
+                                              <div className="text-[9px] font-bold text-blue-700">Editando sub-documento</div>
+                                              <input type="text" value={editandoSubDoc.sub.nombre} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, nombre: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <input type="date" value={editandoSubDoc.sub.fecha_vencimiento} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, fecha_vencimiento: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <input type="text" placeholder="URL" value={editandoSubDoc.sub.enlace_url || ""} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, enlace_url: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <div className="flex gap-1">
+                                                <button
+                                                  onClick={async () => {
+                                                    await onActualizarSubDoc(editandoSubDoc.id, editandoSubDoc.sub);
+                                                    setEditandoSubDoc(null);
+                                                  }}
+                                                  className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]"
+                                                >
+                                                  Guardar
+                                                </button>
+                                                <button onClick={() => setEditandoSubDoc(null)} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </>
                                       )}
                                     </div>
                                   );
@@ -859,7 +895,7 @@ function SidebarTecnicoHabilitaciones({
             </div>
           )}
 
-          {/* Añadir OT completa (para crear habilitación eligiendo OT) */}
+          {/* Añadir OT completa */}
           {modoAcceso === "editor" && !agregandoHab && (
             <div className="mt-3 p-2 bg-gray-50 rounded border border-gray-200 space-y-1">
               <div className="text-[10px] font-bold text-gray-700">Añadir habilitación eligiendo OT</div>
