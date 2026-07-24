@@ -1,11 +1,12 @@
 /**
  * GET /api/data
  * Devuelve TODOS los datos necesarios para renderizar la app:
- *   - tecnicos (activos + inactivos)
- *   - ots (todas las OTs con visible_mapa)
- *   - actividades (con colores)
- *   - cronograma (mapa)
- *   - modoAcceso (lector | editor)
+ *   - tecnicos
+ *   - ots
+ *   - actividades
+ *   - cronograma
+ *   - sedes          ← NUEVO: para que el mapa y el admin compartan la misma fuente
+ *   - modoAcceso
  */
 import { NextResponse } from "next/server";
 import {
@@ -13,6 +14,7 @@ import {
   getOTs,
   getActividades,
   getCronogramaMap,
+  getSedes,
 } from "@/lib/sheets";
 import { getModoAcceso } from "@/lib/auth";
 
@@ -21,11 +23,12 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    const [tecnicos, allOts, actividades, cronograma, modoAcceso] = await Promise.all([
+    const [tecnicos, allOts, actividades, cronograma, sedes, modoAcceso] = await Promise.all([
       getTecnicos(),
       getOTs(),
       getActividades(),
       getCronogramaMap(),
+      getSedes(),
       getModoAcceso(),
     ]);
 
@@ -36,6 +39,7 @@ export async function GET() {
         ots: allOts,
         actividades,
         cronograma,
+        sedes,             // ← NUEVO
         modoAcceso,
       },
     });
