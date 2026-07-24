@@ -3,7 +3,6 @@
 import { useStore } from "@/lib/store";
 import { useState, useEffect, useMemo } from "react";
 import { Plus, Trash2, Save, MapPin, RefreshCw, Pencil, X, ChevronDown, ChevronUp, Building2, Upload, Search, AlertCircle } from "lucide-react";
-import { MINAS_PERU } from "@/lib/minasData";
 
 export function AdminPanel() {
   const { cargarDatosSilencioso, showToast } = useStore();
@@ -22,7 +21,8 @@ export function AdminPanel() {
   const [query, setQuery] = useState("");
   const [filtroOts, setFiltroOts] = useState<"todas" | "conOts" | "sinOts" | "masOts" | "menosOts">("todas");
 
-  const fetchAllData = async () => {
+  // FIX: Función única que refresca TODO (admin + store + mapa)
+  const refreshAll = async () => {
     setCargando(true);
     try {
       const [resOts, resSedes] = await Promise.all([
@@ -33,6 +33,8 @@ export function AdminPanel() {
       const jsonSedes = await resSedes.json();
       if (jsonOts.ok) setAllOts(jsonOts.data);
       if (jsonSedes.ok) setSedes(jsonSedes.data);
+      // FIX: También refrescar el store para que el mapa y todo lo demás se actualice
+      await cargarDatosSilencioso();
     } catch (err) {
       console.error("Error:", err);
     } finally {
@@ -40,7 +42,7 @@ export function AdminPanel() {
     }
   };
 
-  useEffect(() => { fetchAllData(); }, []);
+  useEffect(() => { refreshAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getOtsDeSede = (sedeNombre: string) => allOts.filter(ot => ot.sede === sedeNombre);
   
@@ -86,6 +88,7 @@ export function AdminPanel() {
   // === Handlers ===
   const resetFormOt = () => { setEditandoTipo(null); setEditandoId(null); setFormOt({ codigo: "", cliente: "", sede: "", estado: "EN PROCESO" }); };
   const handleEditOt = (ot: any) => { setEditandoTipo("ot"); setEditandoId(ot.codigo); setFormOt({ codigo: ot.codigo, cliente: ot.cliente, sede: ot.sede, estado: ot.estado }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  
   const handleSubmitOt = async () => {
     if (!formOt.codigo || !formOt.cliente) return showToast("Código y cliente son obligatorios", "error");
     try {
@@ -95,21 +98,25 @@ export function AdminPanel() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       showToast(`OT ${editandoId ? 'actualizada' : 'agregada'}`, "ok");
-      await fetchAllData(); await cargarDatosSilencioso(); resetFormOt();
+      await refreshAll(); // FIX: refresca todo (admin + mapa)
+      resetFormOt();
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
+  
   const handleDeleteOt = async (codigo: string) => {
     if (!confirm(`¿Eliminar OT ${codigo}?`)) return;
     try {
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "eliminar_ot", codigo }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await fetchAllData(); await cargarDatosSilencioso(); showToast(`OT eliminada`, "ok");
+      await refreshAll(); // FIX: refresca todo
+      showToast(`OT eliminada`, "ok");
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
   const resetFormSede = () => { setEditandoTipo(null); setEditandoId(null); setFormSede({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" }); };
   const handleEditSede = (sede: any) => { setEditandoTipo("sede"); setEditandoId(sede.nombre); setFormSede({ nombre: sede.nombre, lat: String(sede.lat), lng: String(sede.lng), region: sede.region, ciudad: sede.ciudad, datoCurioso: sede.datoCurioso, foto_ciudad: sede.foto_ciudad }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  
   const handleSubmitSede = async () => {
     if (!formSede.nombre || !formSede.lat || !formSede.lng) return showToast("Nombre, lat y lng son obligatorios", "error");
     try {
@@ -119,33 +126,42 @@ export function AdminPanel() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       showToast(`Sede ${editandoId ? 'actualizada' : 'agregada'}`, "ok");
-      await fetchAllData(); resetFormSede();
+      await refreshAll(); // FIX: refresca todo (admin + mapa)
+      resetFormSede();
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
+  
   const handleDeleteSede = async (nombre: string) => {
-    if (!confirm(`¿Eliminar la sede ${nombre}?`)) return;
+    if (!confirm(`¿Eliminar la sede ${nombre}? Se quitará del Excel y del mapa.`)) return;
     try {
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "eliminar", nombre }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await fetchAllData(); showToast(`Sede eliminada`, "ok");
+      await refreshAll(); // FIX: refresca todo (admin + mapa)
+      showToast(`Sede eliminada`, "ok");
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
+  // FIX: Sincronizar Excel ahora SOLO escribe lo de la página al Excel.
+  // No agrega las 30 predefinidas. Es unilateral: página → Excel.
   const handleSincronizarTodo = async () => {
-    if (!confirm("¿Sincronizar todas las sedes al Excel? Se agregarán las 30 predefinidas manteniendo las que ya creaste.")) return;
+    if (!confirm("¿Sincronizar el Excel con la información actual de la página? Se sobreescribirá la hoja Sedes del Excel con lo que ves aquí.")) return;
     try {
-      const sedesActuales = sedes.map(s => ({ ...s }));
-      const nombresActuales = new Set(sedesActuales.map(s => s.nombre.toUpperCase()));
-      MINAS_PERU.forEach(p => {
-        if (!nombresActuales.has(p.nombre.toUpperCase())) {
-          sedesActuales.push({ ...p, visible: true });
-        }
-      });
+      const sedesActuales = sedes.map(s => ({
+        nombre: s.nombre,
+        lat: s.lat,
+        lng: s.lng,
+        region: s.region,
+        ciudad: s.ciudad,
+        datoCurioso: s.datoCurioso,
+        foto_ciudad: s.foto_ciudad,
+        visible: s.visible ?? true,
+      }));
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "sincronizar", sedes: sedesActuales }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await fetchAllData(); showToast("Sedes sincronizadas en Excel", "ok");
+      await refreshAll();
+      showToast(`Excel sincronizado (${sedesActuales.length} sedes)`, "ok");
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
@@ -156,13 +172,13 @@ export function AdminPanel() {
       <div className="mb-6 flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Panel de Administración</h2>
-          <p className="text-sm text-gray-500">Gestión unificada de Sedes y OTs</p>
+          <p className="text-sm text-gray-500">Gestión unificada de Sedes y OTs · Los cambios se reflejan en el mapa automáticamente</p>
         </div>
         <div className="flex gap-2">
           <button onClick={handleSincronizarTodo} className="flex items-center gap-1 px-3 py-1.5 text-xs text-[#E91E63] border border-[#E91E63] rounded hover:bg-pink-50">
             <Upload size={14} /> Sincronizar Excel
           </button>
-          <button onClick={() => { cargarDatosSilencioso(); fetchAllData(); }} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
+          <button onClick={refreshAll} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b]">
             <RefreshCw size={14} /> Actualizar
           </button>
         </div>
@@ -200,7 +216,7 @@ export function AdminPanel() {
                 </select>
               </div>
               <div><label className="text-[10px] font-semibold text-gray-500 uppercase">Estado</label>
-                <select value={formOt.estado} onChange={(e) => setFormOt({...formOt, estado: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded bg-white">
+                <select value={formOt.estado} onChange={(e) => setFormOt({...formOt, estado: e.target.value})} className="w-full px-2 py-1.5 text-xs border-gray-200 rounded bg-white">
                   <option value="EN PROCESO">EN PROCESO</option><option value="PENDIENTE">PENDIENTE</option><option value="FINALIZADO">FINALIZADO</option><option value="PERDIDO">PERDIDO</option>
                 </select>
               </div>
@@ -259,11 +275,10 @@ export function AdminPanel() {
                   {sedesFiltradas.map((sede) => {
                     const otsDeSede = getOtsDeSede(sede.nombre);
                     const expanded = isExpanded(sede.nombre);
-                    // FIX: Resaltar sedes sin OTs
                     const sinOts = otsDeSede.length === 0;
                     return (
-                      <>
-                        <tr key={sede.nombre} className={`border-b border-gray-200 hover:bg-gray-50 font-medium ${sinOts ? 'bg-orange-50' : ''}`}>
+                      <tbody key={sede.nombre}>
+                        <tr className={`border-b border-gray-200 hover:bg-gray-50 font-medium ${sinOts ? 'bg-orange-50' : ''}`}>
                           <td className="px-3 py-2">
                             <button onClick={() => setSedeExpandida(expanded && !expandirTodo ? null : sede.nombre)} className="p-0.5 hover:bg-gray-200 rounded">
                               {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -303,12 +318,12 @@ export function AdminPanel() {
                             )}
                           </>
                         )}
-                      </>
+                      </tbody>
                     );
                   })}
                   
                   {otsSinSede.length > 0 && (
-                    <>
+                    <tbody>
                       <tr className="border-b border-gray-200 hover:bg-gray-50 font-medium bg-orange-50">
                         <td className="px-3 py-2">
                           <button onClick={() => setSedeExpandida(sedeExpandida === "__sin_sede__" ? null : "__sin_sede__")} className="p-0.5 hover:bg-gray-200 rounded">
@@ -327,7 +342,7 @@ export function AdminPanel() {
                           <tr key={ot.codigo} className="bg-orange-50/50 border-b border-gray-100">
                             <td className="px-3 py-1.5"></td>
                             <td className="px-3 py-1.5 font-mono text-[10px] text-gray-700 pl-8">↳ {ot.codigo}</td>
-                            <td className="px-3 py-1.5 text-gray-600 text-[10px]">{ot.cliente}</td>
+                            <td className="px-3 py-1.5 text-gray-600 text-[10px]">{ot.cliente}</div></td>
                             <td className="px-3 py-1.5 text-gray-400 text-[10px]">—</td>
                             <td className="px-3 py-1.5">
                               <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>{ot.estado}</span>
@@ -340,7 +355,7 @@ export function AdminPanel() {
                           </tr>
                         ))
                       )}
-                    </>
+                    </tbody>
                   )}
                 </>
               )}
