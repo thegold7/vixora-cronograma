@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { Plus, Trash2, Save, MapPin, RefreshCw, Pencil, X, ChevronDown, ChevronUp, Building2, Upload, Search, AlertCircle } from "lucide-react";
 
 export function AdminPanel() {
@@ -33,7 +33,6 @@ export function AdminPanel() {
       const jsonSedes = await resSedes.json();
       if (jsonOts.ok) setAllOts(jsonOts.data);
       if (jsonSedes.ok) setSedes(jsonSedes.data);
-      // FIX: También refrescar el store para que el mapa y todo lo demás se actualice
       await cargarDatosSilencioso();
     } catch (err) {
       console.error("Error:", err);
@@ -98,7 +97,7 @@ export function AdminPanel() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       showToast(`OT ${editandoId ? 'actualizada' : 'agregada'}`, "ok");
-      await refreshAll(); // FIX: refresca todo (admin + mapa)
+      await refreshAll();
       resetFormOt();
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
@@ -109,7 +108,7 @@ export function AdminPanel() {
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "eliminar_ot", codigo }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await refreshAll(); // FIX: refresca todo
+      await refreshAll();
       showToast(`OT eliminada`, "ok");
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
@@ -126,7 +125,7 @@ export function AdminPanel() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       showToast(`Sede ${editandoId ? 'actualizada' : 'agregada'}`, "ok");
-      await refreshAll(); // FIX: refresca todo (admin + mapa)
+      await refreshAll();
       resetFormSede();
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
@@ -137,13 +136,12 @@ export function AdminPanel() {
       const res = await fetch("/api/sedes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "eliminar", nombre }) });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await refreshAll(); // FIX: refresca todo (admin + mapa)
+      await refreshAll();
       showToast(`Sede eliminada`, "ok");
     } catch (err) { showToast(err instanceof Error ? err.message : "Error", "error"); }
   };
 
   // FIX: Sincronizar Excel ahora SOLO escribe lo de la página al Excel.
-  // No agrega las 30 predefinidas. Es unilateral: página → Excel.
   const handleSincronizarTodo = async () => {
     if (!confirm("¿Sincronizar el Excel con la información actual de la página? Se sobreescribirá la hoja Sedes del Excel con lo que ves aquí.")) return;
     try {
@@ -216,7 +214,7 @@ export function AdminPanel() {
                 </select>
               </div>
               <div><label className="text-[10px] font-semibold text-gray-500 uppercase">Estado</label>
-                <select value={formOt.estado} onChange={(e) => setFormOt({...formOt, estado: e.target.value})} className="w-full px-2 py-1.5 text-xs border-gray-200 rounded bg-white">
+                <select value={formOt.estado} onChange={(e) => setFormOt({...formOt, estado: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded bg-white">
                   <option value="EN PROCESO">EN PROCESO</option><option value="PENDIENTE">PENDIENTE</option><option value="FINALIZADO">FINALIZADO</option><option value="PERDIDO">PERDIDO</option>
                 </select>
               </div>
@@ -277,7 +275,7 @@ export function AdminPanel() {
                     const expanded = isExpanded(sede.nombre);
                     const sinOts = otsDeSede.length === 0;
                     return (
-                      <tbody key={sede.nombre}>
+                      <Fragment key={sede.nombre}>
                         <tr className={`border-b border-gray-200 hover:bg-gray-50 font-medium ${sinOts ? 'bg-orange-50' : ''}`}>
                           <td className="px-3 py-2">
                             <button onClick={() => setSedeExpandida(expanded && !expandirTodo ? null : sede.nombre)} className="p-0.5 hover:bg-gray-200 rounded">
@@ -318,12 +316,12 @@ export function AdminPanel() {
                             )}
                           </>
                         )}
-                      </tbody>
+                      </Fragment>
                     );
                   })}
                   
                   {otsSinSede.length > 0 && (
-                    <tbody>
+                    <Fragment>
                       <tr className="border-b border-gray-200 hover:bg-gray-50 font-medium bg-orange-50">
                         <td className="px-3 py-2">
                           <button onClick={() => setSedeExpandida(sedeExpandida === "__sin_sede__" ? null : "__sin_sede__")} className="p-0.5 hover:bg-gray-200 rounded">
@@ -342,7 +340,7 @@ export function AdminPanel() {
                           <tr key={ot.codigo} className="bg-orange-50/50 border-b border-gray-100">
                             <td className="px-3 py-1.5"></td>
                             <td className="px-3 py-1.5 font-mono text-[10px] text-gray-700 pl-8">↳ {ot.codigo}</td>
-                            <td className="px-3 py-1.5 text-gray-600 text-[10px]">{ot.cliente}</div></td>
+                            <td className="px-3 py-1.5 text-gray-600 text-[10px]">{ot.cliente}</td>
                             <td className="px-3 py-1.5 text-gray-400 text-[10px]">—</td>
                             <td className="px-3 py-1.5">
                               <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold ${ot.estado === "EN PROCESO" ? "bg-yellow-100 text-yellow-700" : ot.estado === "FINALIZADO" ? "bg-green-100 text-green-700" : ot.estado === "PENDIENTE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>{ot.estado}</span>
@@ -355,7 +353,7 @@ export function AdminPanel() {
                           </tr>
                         ))
                       )}
-                    </tbody>
+                    </Fragment>
                   )}
                 </>
               )}
