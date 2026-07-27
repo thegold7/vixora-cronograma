@@ -4,22 +4,19 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
-import { MINAS_PERU, type MinaCoord } from "@/lib/minasData";
 import type { OT, Tecnico, Sede, EntradaCronograma } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
+import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp, Plus, Trash2, Settings, Save } from "lucide-react";
 
-// FIX: Mapeo de actividades a sedes.
-// Esto permite que cuando un técnico tiene actividad "PROYECTO MC", se le asocie
-// a la sede MARCOBRE aunque la OT tenga un sede distinto en el Admin.
+// FIX: Mapeo de actividades a sedes (sigue siendo útil para PROYECTO MC, PROYECTO ANT)
 const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
   "PROYECTO MC": "MARCOBRE",
   "PROYECTO ANT": "ANTAPACCAY",
 };
 
 interface MinaAgrupada {
-  coord: MinaCoord & { visible?: boolean };
-  ots: OT[];                    // OTs donde ot.sede = esta sede
-  otsRealizandose: OT[];        // OTs que se están realizando en esta sede
+  coord: Sede;
+  ots: OT[];
+  otsRealizandose: OT[];
   enProceso: number;
   finalizado: number;
   pendiente: number;
@@ -37,7 +34,13 @@ interface TecnicoViaje {
 }
 
 export function MapaMinas() {
-  const { ots, cronograma, tecnicos, actividades, cargarDatosSilencioso, showToast } = useStore();
+  // FIX: ahora leemos sedes del store global (sincronizado con Admin)
+  const {
+    ots, cronograma, tecnicos, actividades, sedes,
+    cargarDatosSilencioso, showToast,
+    agregarSede, eliminarSede,
+  } = useStore();
+
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.CircleMarker[]>([]);
@@ -45,10 +48,12 @@ export function MapaMinas() {
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
   const [imgKey, setImgKey] = useState(0);
-  const [sedesExcel, setSedesExcel] = useState<Sede[]>([]);
   const [otsAsociadasExpandidas, setOtsAsociadasExpandidas] = useState(false);
   const [filtroFechasActivo, setFiltroFechasActivo] = useState(false);
   const [ocultarSinOts, setOcultarSinOts] = useState(false);
+  // FIX: panel para gestionar sedes (añadir/eliminar) dentro del mapa
+  const [panelSedesAbierto, setPanelSedesAbierto] = useState(false);
+  const [nuevaSede, setNuevaSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
 
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
@@ -63,22 +68,8 @@ export function MapaMinas() {
   const handleActualizar = async () => {
     setActualizando(true);
     await cargarDatosSilencioso();
-    try {
-      const res = await fetch("/api/sedes", { cache: "no-store" });
-      const json = await res.json();
-      if (json.ok) setSedesExcel(json.data);
-    } catch (err) {
-      console.error("Error al cargar sedes:", err);
-    }
     setActualizando(false);
   };
-
-  useEffect(() => {
-    fetch("/api/sedes", { cache: "no-store" })
-      .then(res => res.json())
-      .then(json => { if (json.ok) setSedesExcel(json.data); })
-      .catch(err => console.error("Error:", err));
-  }, []);
 
   const handleAplicarFechas = () => {
     setFechaInicio(inputInicio);
@@ -99,39 +90,12 @@ export function MapaMinas() {
     setFiltroFechasActivo(false);
   };
 
+  // FIX: todasLasSedes ahora viene del store (sincronizado con Admin)
+  // Ya NO se mezcla con MINAS_PERU. El Excel es la única fuente de verdad.
   const todasLasSedes = useMemo(() => {
-    const mapaSedes = new Map<string, MinaCoord & { visible?: boolean }>();
+    return sedes.map(s => ({ ...s, visible: s.visible ?? true }));
+  }, [sedes]);
 
-    MINAS_PERU.forEach(s => {
-      const excelSede = sedesExcel.find(e => e.nombre.toUpperCase() === s.nombre.toUpperCase());
-      mapaSedes.set(s.nombre.toUpperCase(), {
-        ...s,
-        visible: excelSede ? excelSede.visible : true,
-      });
-    });
-
-    sedesExcel.forEach(s => {
-      if (!mapaSedes.has(s.nombre.toUpperCase())) {
-        mapaSedes.set(s.nombre.toUpperCase(), {
-          nombre: s.nombre,
-          lat: s.lat,
-          lng: s.lng,
-          region: s.region,
-          ciudad: s.ciudad,
-          datoCurioso: s.datoCurioso,
-          foto_ciudad: s.foto_ciudad,
-          visible: s.visible ?? true,
-        });
-      } else {
-        const existing = mapaSedes.get(s.nombre.toUpperCase())!;
-        existing.visible = s.visible ?? true;
-      }
-    });
-
-    return Array.from(mapaSedes.values());
-  }, [sedesExcel]);
-
-  // Mostrar TODAS las OTs excepto PERDIDO y visible_mapa=false.
   const otsValidas = useMemo(() => {
     return ots.filter(o => {
       if (o.visible_mapa === false) return false;
@@ -140,16 +104,14 @@ export function MapaMinas() {
     });
   }, [ots]);
 
-  // FIX: otMap ahora usa TODAS las OTs (no solo otsValidas).
-  // Esto permite que OTs con visible_mapa=false o PERDIDO se puedan referenciar
-  // desde el cronograma sin que desaparezcan del mapa las sedes asociadas.
   const otMap = useMemo(() => {
     const m: Record<string, OT> = {};
     ots.forEach(o => { m[o.codigo] = o; });
     return m;
   }, [ots]);
 
-  const buscarSede = (texto: string): (MinaCoord & { visible?: boolean }) | null => {
+  // Búsqueda de sede por texto (en la lista del store)
+  const buscarSede = (texto: string): Sede | null => {
     if (!texto) return null;
     const textoUpper = texto.toUpperCase().trim();
     if (!textoUpper) return null;
@@ -174,31 +136,28 @@ export function MapaMinas() {
         return s;
       }
     }
-
     return null;
   };
 
-  // FIX: Dado un cronograma entry, determinar a qué sedes pertenece.
   const getSedesForEntry = (e: EntradaCronograma): Set<string> => {
-    const sedes = new Set<string>();
-
+    const sedesForEntry = new Set<string>();
     const sedeFromActividad = ACTIVIDAD_SEDE_MAP[e.actividad.toUpperCase()];
     if (sedeFromActividad) {
-      sedes.add(sedeFromActividad);
+      // Verificar que la sede exista en el store
+      const existe = todasLasSedes.find(s => s.nombre.toUpperCase() === sedeFromActividad.toUpperCase());
+      if (existe) sedesForEntry.add(existe.nombre);
     }
-
     if (e.ots_asignadas && e.ots_asignadas !== "—") {
       const codigos = e.ots_asignadas.split(",").map(s => s.trim());
       for (const cod of codigos) {
         const ot = otMap[cod];
         if (ot) {
           const coord = buscarSede(ot.sede) || buscarSede(ot.cliente);
-          if (coord) sedes.add(coord.nombre);
+          if (coord) sedesForEntry.add(coord.nombre);
         }
       }
     }
-
-    return sedes;
+    return sedesForEntry;
   };
 
   const minasAgrupadas = useMemo(() => {
@@ -219,17 +178,13 @@ export function MapaMinas() {
       else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
     }
 
-    // FIX: otsRealizandose y sedesConActividadEnRango se calculan en el mismo loop
     const otsRealizandoseBySede: Record<string, Set<string>> = {};
     const sedesConActividadEnRango = new Set<string>();
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
       if (!actividadesRojas.has(e.actividad)) continue;
-
       const sedesForEntry = getSedesForEntry(e);
-      // FIX: Cualquier sede en sedesForEntry tiene actividad en rango
       sedesForEntry.forEach(s => sedesConActividadEnRango.add(s));
-
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
         for (const sedeName of sedesForEntry) {
@@ -244,9 +199,6 @@ export function MapaMinas() {
       g.otsRealizandose = Array.from(codigosRealizandose)
         .map(cod => otMap[cod])
         .filter((o): o is OT => !!o);
-      // FIX: hasActividadEnRango ahora se basa en sedesConActividadEnRango,
-      // no en otsRealizandose.length. Esto asegura que aunque una OT esté filtrada
-      // (visible_mapa=false o PERDIDO), la sede siga apareciendo si hay actividad roja.
       g.hasActividadEnRango = sedesConActividadEnRango.has(g.coord.nombre);
     });
 
@@ -279,16 +231,12 @@ export function MapaMinas() {
 
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoViaje[] => {
     const entriesByTecnico: Record<string, { fecha: string; actividad: string; ots: string[] }[]> = {};
-
     for (const e of Object.values(cronograma)) {
       if (!actividadesRojas.has(e.actividad)) continue;
-
       const sedesForEntry = getSedesForEntry(e);
       if (!sedesForEntry.has(mina.coord.nombre)) continue;
-
       const tecnico = tecnicos.find(t => t.id === e.tecnico_id);
       if (!tecnico || !tecnico.activo) continue;
-
       if (!entriesByTecnico[tecnico.id]) entriesByTecnico[tecnico.id] = [];
       const codigos = e.ots_asignadas && e.ots_asignadas !== "—"
         ? e.ots_asignadas.split(",").map(s => s.trim())
@@ -299,11 +247,9 @@ export function MapaMinas() {
     const viajes: TecnicoViaje[] = [];
     for (const [tecId, entries] of Object.entries(entriesByTecnico)) {
       entries.sort((a, b) => a.fecha.localeCompare(b.fecha));
-
       const trips: { fecha: string; actividad: string; ots: string[] }[][] = [];
       let currentTrip: { fecha: string; actividad: string; ots: string[] }[] = [];
       let prevDate: string | null = null;
-
       for (const entry of entries) {
         if (prevDate) {
           const prev = new Date(prevDate + "T00:00:00");
@@ -322,7 +268,6 @@ export function MapaMinas() {
       for (const trip of trips) {
         const tripHasDateInRange = trip.some(e => e.fecha >= fechaInicio && e.fecha <= fechaFin);
         if (!tripHasDateInRange) continue;
-
         const fechas = trip.map(e => e.fecha).sort();
         const actividadesTrip = new Set<string>();
         const otsRealizadasTrip = new Set<string>();
@@ -330,10 +275,8 @@ export function MapaMinas() {
           actividadesTrip.add(e.actividad);
           e.ots.forEach(o => otsRealizadasTrip.add(o));
         }
-
         const tec = tecnicos.find(t => t.id === tecId);
         if (!tec) continue;
-
         viajes.push({
           tecnico: tec,
           fechaInicio: fechas[0],
@@ -344,43 +287,44 @@ export function MapaMinas() {
         });
       }
     }
-
     return viajes.sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
+  // FIX: toggle visible ahora usa el store (sincronizado)
   const handleToggleVisibleSede = async (nombre: string) => {
-    const sedeExcel = sedesExcel.find(s => s.nombre === nombre);
-    const isVisible = sedeExcel ? (sedeExcel.visible ?? true) : true;
+    const sede = todasLasSedes.find(s => s.nombre === nombre);
+    if (!sede) return;
+    const isVisible = sede.visible ?? true;
+    // Llama al store action que actualiza Excel + recarga store
+    const { toggleSedeVisible } = useStore.getState();
+    await toggleSedeVisible(nombre, !isVisible);
+    showToast(`Sede ${!isVisible ? 'visible' : 'oculta'}`, "ok");
+  };
 
-    if (sedeExcel) {
-      setSedesExcel(prev => prev.map(s =>
-        s.nombre === nombre ? { ...s, visible: !isVisible } : s
-      ));
-    } else {
-      const sedePredef = MINAS_PERU.find(s => s.nombre === nombre);
-      if (sedePredef) {
-        setSedesExcel(prev => [...prev, { ...sedePredef, visible: false }]);
-      }
+  // FIX: añadir sede desde el panel flotante
+  const handleAgregarSede = async () => {
+    if (!nuevaSede.nombre || !nuevaSede.lat || !nuevaSede.lng) {
+      showToast("Nombre, lat y lng son obligatorios", "error");
+      return;
     }
+    const ok = await agregarSede({
+      nombre: nuevaSede.nombre,
+      lat: parseFloat(nuevaSede.lat),
+      lng: parseFloat(nuevaSede.lng),
+      region: nuevaSede.region,
+      ciudad: nuevaSede.ciudad,
+      datoCurioso: nuevaSede.datoCurioso,
+      foto_ciudad: nuevaSede.foto_ciudad,
+    });
+    if (ok) {
+      setNuevaSede({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
+    }
+  };
 
-    try {
-      const res = await fetch("/api/sedes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accion: "toggle_visible_sede", nombre, visible: !isVisible })
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      await cargarDatosSilencioso();
-      showToast(`Sede ${!isVisible ? 'visible' : 'oculta'}`, "ok");
-    } catch (err) {
-      if (sedeExcel) {
-        setSedesExcel(prev => prev.map(s =>
-          s.nombre === nombre ? { ...s, visible: isVisible } : s
-        ));
-      }
-      showToast(err instanceof Error ? err.message : "Error", "error");
-    }
+  // FIX: eliminar sede desde el panel flotante
+  const handleEliminarSede = async (nombre: string) => {
+    if (!confirm(`¿Eliminar la sede ${nombre} del Excel y del mapa?`)) return;
+    await eliminarSede(nombre);
   };
 
   useEffect(() => {
@@ -440,14 +384,24 @@ export function MapaMinas() {
   };
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden relative">
       <div className="w-72 shrink-0 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-3 border-b border-gray-200 bg-white shrink-0">
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">🗺️ Mapa de Minas</div>
-            <button onClick={handleActualizar} disabled={actualizando} className="p-1 text-gray-500 hover:text-[#E91E63] disabled:opacity-50" title="Actualizar datos">
-              <RefreshCw size={14} className={actualizando ? "animate-spin" : ""} />
-            </button>
+            <div className="flex gap-1">
+              {/* FIX: botón para abrir panel de gestión de sedes */}
+              <button
+                onClick={() => setPanelSedesAbierto(!panelSedesAbierto)}
+                className={`p-1 rounded ${panelSedesAbierto ? "text-[#E91E63] bg-pink-50" : "text-gray-500 hover:text-[#E91E63]"}`}
+                title="Gestionar sedes"
+              >
+                <Settings size={14} />
+              </button>
+              <button onClick={handleActualizar} disabled={actualizando} className="p-1 text-gray-500 hover:text-[#E91E63] disabled:opacity-50" title="Actualizar datos">
+                <RefreshCw size={14} className={actualizando ? "animate-spin" : ""} />
+              </button>
+            </div>
           </div>
           <div className="relative mb-2">
             <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -525,10 +479,59 @@ export function MapaMinas() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative">
         <div className="flex-1 relative">
           <div ref={containerRef} className="w-full h-full" style={{ minHeight: "400px" }} />
         </div>
+
+        {/* FIX: Panel flotante para gestionar sedes (añadir/eliminar) */}
+        {panelSedesAbierto && (
+          <div className="absolute top-2 right-2 w-80 bg-white rounded-lg shadow-2xl border border-gray-200 z-[1000] max-h-[calc(100%-2rem)] flex flex-col">
+            <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
+              <div className="text-xs font-bold text-white uppercase">Gestionar Sedes</div>
+              <button onClick={() => setPanelSedesAbierto(false)} className="text-white/60 hover:text-white"><X size={14} /></button>
+            </div>
+            <div className="p-3 overflow-y-auto flex-1">
+              <div className="text-[10px] font-bold text-gray-500 uppercase mb-2">Añadir nueva sede</div>
+              <div className="space-y-1 mb-3">
+                <input type="text" placeholder="Nombre *" value={nuevaSede.nombre} onChange={(e) => setNuevaSede({...nuevaSede, nombre: e.target.value})} className="w-full px-2 py-1 text-[10px] border border-gray-200 rounded" />
+                <div className="flex gap-1">
+                  <input type="number" step="any" placeholder="Lat *" value={nuevaSede.lat} onChange={(e) => setNuevaSede({...nuevaSede, lat: e.target.value})} className="flex-1 px-2 py-1 text-[10px] border border-gray-200 rounded" />
+                  <input type="number" step="any" placeholder="Lng *" value={nuevaSede.lng} onChange={(e) => setNuevaSede({...nuevaSede, lng: e.target.value})} className="flex-1 px-2 py-1 text-[10px] border border-gray-200 rounded" />
+                </div>
+                <input type="text" placeholder="Región" value={nuevaSede.region} onChange={(e) => setNuevaSede({...nuevaSede, region: e.target.value})} className="w-full px-2 py-1 text-[10px] border border-gray-200 rounded" />
+                <input type="text" placeholder="Ciudad" value={nuevaSede.ciudad} onChange={(e) => setNuevaSede({...nuevaSede, ciudad: e.target.value})} className="w-full px-2 py-1 text-[10px] border border-gray-200 rounded" />
+                <input type="text" placeholder="URL Foto" value={nuevaSede.foto_ciudad} onChange={(e) => setNuevaSede({...nuevaSede, foto_ciudad: e.target.value})} className="w-full px-2 py-1 text-[10px] border border-gray-200 rounded" />
+                <textarea placeholder="Dato curioso" value={nuevaSede.datoCurioso} onChange={(e) => setNuevaSede({...nuevaSede, datoCurioso: e.target.value})} rows={2} className="w-full px-2 py-1 text-[10px] border border-gray-200 rounded resize-none" />
+                <button onClick={handleAgregarSede} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]">
+                  <Plus size={10} /> Añadir sede
+                </button>
+              </div>
+
+              <div className="text-[10px] font-bold text-gray-500 uppercase mb-2 mt-3">Sedes actuales ({todasLasSedes.length})</div>
+              <div className="space-y-1 max-h-60 overflow-y-auto">
+                {todasLasSedes.map(s => (
+                  <div key={s.nombre} className="p-1.5 border border-gray-200 rounded flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] font-semibold text-gray-900 truncate">{s.nombre}</div>
+                      <div className="text-[9px] text-gray-500">{s.region}</div>
+                    </div>
+                    <button
+                      onClick={() => handleEliminarSede(s.nombre)}
+                      className="p-1 rounded text-red-600 hover:bg-red-100"
+                      title="Eliminar sede"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[9px] text-gray-400 italic mt-2">
+                💡 Los cambios se sincronizan automáticamente con el panel de Admin y el Excel.
+              </div>
+            </div>
+          </div>
+        )}
 
         {selectedMina && (
           <div className="h-80 shrink-0 bg-white border-t border-gray-200 flex">
