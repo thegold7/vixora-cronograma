@@ -14,6 +14,7 @@ import type {
   ColorActividad,
   Habilitacion,
   SubDocumento,
+  Sede,
 } from "@/lib/types";
 
 export interface CronogramaMap {
@@ -37,6 +38,7 @@ interface AppState {
   actividades: Actividad[];
   cronograma: CronogramaMap;
   habilitaciones: Habilitacion[];
+  sedes: Sede[];              // ← NUEVO: fuente única de sedes para mapa y admin
   modoAcceso: ModoAcceso;
   cargando: boolean;
   actualizando: boolean;
@@ -89,23 +91,13 @@ interface AppState {
   guardarEntrada: (
     tecnico_id: string,
     fecha: string,
-    data: {
-      actividad: string;
-      ots_asignadas: string;
-      detalle: string;
-      notas: string;
-    }
+    data: { actividad: string; ots_asignadas: string; detalle: string; notas: string; }
   ) => Promise<boolean>;
   guardarEntradasRango: (
     tecnico_id: string,
     fechaInicio: string,
     fechaFin: string,
-    data: {
-      actividad: string;
-      ots_asignadas: string;
-      detalle: string;
-      notas: string;
-    }
+    data: { actividad: string; ots_asignadas: string; detalle: string; notas: string; }
   ) => Promise<boolean>;
   cambiarEstadoRango: (
     tecnico_id: string,
@@ -151,6 +143,13 @@ interface AppState {
   eliminarTecnicoLogico: (id: string) => Promise<boolean>;
   reactivarTecnico: (id: string) => Promise<boolean>;
   sincronizarTecnicosExcel: () => Promise<boolean>;
+
+  // ===== Sedes CRUD (desde el store, para sincronizar Admin ↔ Mapa) =====
+  agregarSede: (s: { nombre: string; lat: number; lng: number; region: string; ciudad: string; datoCurioso: string; foto_ciudad: string }) => Promise<boolean>;
+  actualizarSede: (nombreOriginal: string, newData: { nombre: string; lat: number; lng: number; region: string; ciudad: string; datoCurioso: string; foto_ciudad: string }) => Promise<boolean>;
+  eliminarSede: (nombre: string) => Promise<boolean>;
+  toggleSedeVisible: (nombre: string, visible: boolean) => Promise<boolean>;
+  sincronizarSedesExcel: () => Promise<boolean>;
 }
 
 export function formatFechaISO(d: Date): string {
@@ -169,6 +168,7 @@ export const useStore = create<AppState>((set, get) => ({
   actividades: [],
   cronograma: {},
   habilitaciones: [],
+  sedes: [],                    // ← NUEVO
   modoAcceso: "lector",
   cargando: true,
   actualizando: false,
@@ -203,6 +203,7 @@ export const useStore = create<AppState>((set, get) => ({
         ots: d.ots,
         actividades: d.actividades,
         cronograma: d.cronograma,
+        sedes: d.sedes ?? [],     // ← NUEVO
         modoAcceso: d.modoAcceso,
         cargando: false,
       });
@@ -226,6 +227,7 @@ export const useStore = create<AppState>((set, get) => ({
         ots: d.ots,
         actividades: d.actividades,
         cronograma: d.cronograma,
+        sedes: d.sedes ?? [],     // ← NUEVO
         modoAcceso: d.modoAcceso,
         actualizando: false,
       });
@@ -262,10 +264,8 @@ export const useStore = create<AppState>((set, get) => ({
     set({ fechaActual: d });
   },
 
-  toggleMostrarDetalles: () =>
-    set((s) => ({ mostrarDetalles: !s.mostrarDetalles })),
-  toggleSidebarDerecha: () =>
-    set((s) => ({ sidebarDerechaVisible: !s.sidebarDerechaVisible })),
+  toggleMostrarDetalles: () => set((s) => ({ mostrarDetalles: !s.mostrarDetalles })),
+  toggleSidebarDerecha: () => set((s) => ({ sidebarDerechaVisible: !s.sidebarDerechaVisible })),
 
   abrirModalEdicion: (tecnico_id, fecha, aplicarARango = false) =>
     set({ modalEdicion: { abierto: true, tecnico_id, fecha, aplicarARango } }),
@@ -282,8 +282,7 @@ export const useStore = create<AppState>((set, get) => ({
     }),
   limpiarOTsSeleccionadas: () => set({ otSeleccionadas: [] }),
   setSeleccionRango: (r) => set({ seleccionRango: r }),
-  limpiarSeleccionRango: () =>
-    set({ seleccionRango: { inicio: null, fin: null, tecnico_id: null } }),
+  limpiarSeleccionRango: () => set({ seleccionRango: { inicio: null, fin: null, tecnico_id: null } }),
   setLoginModalAbierto: (b) => set({ loginModalAbierto: b }),
 
   showToast: (mensaje, tipo = "info") => {
@@ -327,10 +326,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Entrada guardada", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al guardar",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al guardar", "error");
       return false;
     }
   },
@@ -353,10 +349,7 @@ export const useStore = create<AppState>((set, get) => ({
           body: JSON.stringify({ tecnico_id, fecha, ...data }),
         });
         const json = await res.json();
-        if (!json.ok) {
-          ok = false;
-          break;
-        }
+        if (!json.ok) { ok = false; break; }
       }
       if (ok) {
         await get().cargarDatosSilencioso();
@@ -364,10 +357,7 @@ export const useStore = create<AppState>((set, get) => ({
       }
       return ok;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al guardar rango",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al guardar rango", "error");
       return false;
     }
   },
@@ -389,8 +379,7 @@ export const useStore = create<AppState>((set, get) => ({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            tecnico_id,
-            fecha,
+            tecnico_id, fecha,
             actividad: nuevaActividad,
             ots_asignadas: existing?.ots_asignadas ?? "—",
             detalle: existing?.detalle ?? "—",
@@ -398,10 +387,7 @@ export const useStore = create<AppState>((set, get) => ({
           }),
         });
         const json = await res.json();
-        if (!json.ok) {
-          ok = false;
-          break;
-        }
+        if (!json.ok) { ok = false; break; }
       }
       if (ok) {
         await get().cargarDatosSilencioso();
@@ -409,10 +395,7 @@ export const useStore = create<AppState>((set, get) => ({
       }
       return ok;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al cambiar estado del rango",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al cambiar estado del rango", "error");
       return false;
     }
   },
@@ -430,10 +413,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Entrada borrada", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al borrar",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al borrar", "error");
       return false;
     }
   },
@@ -451,10 +431,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`Técnico ${activo ? "activado" : "desactivado"}`, "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al cambiar técnico",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al cambiar técnico", "error");
       return false;
     }
   },
@@ -477,10 +454,7 @@ export const useStore = create<AppState>((set, get) => ({
       );
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al regenerar",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al regenerar", "error");
       return false;
     }
   },
@@ -498,10 +472,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`OT ${codigo} → ${nuevoEstado}`, "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al cambiar estado OT",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al cambiar estado OT", "error");
       return false;
     }
   },
@@ -519,10 +490,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`OT ${codigo} agregada`, "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al agregar OT",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al agregar OT", "error");
       return false;
     }
   },
@@ -633,7 +601,6 @@ export const useStore = create<AppState>((set, get) => ({
     const inicio = new Date(seleccionRango.inicio + "T00:00:00");
     const fin = new Date(seleccionRango.fin + "T00:00:00");
     const diasRango = Math.round((fin.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-
     const entradasOriginales: { offset: number; entrada: EntradaCronograma }[] = [];
     const actual = new Date(inicio);
     while (actual <= fin) {
@@ -645,12 +612,10 @@ export const useStore = create<AppState>((set, get) => ({
       }
       actual.setDate(actual.getDate() + 1);
     }
-
     if (entradasOriginales.length === 0) {
       get().showToast("El rango no tiene asignaciones", "info");
       return false;
     }
-
     let count = 0;
     for (let v = 1; v <= veces; v++) {
       for (const item of entradasOriginales) {
@@ -678,7 +643,6 @@ export const useStore = create<AppState>((set, get) => ({
 
   setPegarMode: (b) => set({ pegarMode: b }),
   limpiarClipboard: () => set({ clipboard: null, pegarMode: false }),
-
   setModalExportarAbierto: (b) => set({ modalExportarAbierto: b }),
 
   // ===== Habilitaciones =====
@@ -689,10 +653,7 @@ export const useStore = create<AppState>((set, get) => ({
       if (!json.ok) throw new Error(json.error);
       set({ habilitaciones: json.data });
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al cargar habilitaciones",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al cargar habilitaciones", "error");
     }
   },
 
@@ -709,10 +670,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Habilitación agregada", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al agregar habilitación",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al agregar habilitación", "error");
       return false;
     }
   },
@@ -730,10 +688,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Habilitación actualizada", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al actualizar habilitación",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al actualizar habilitación", "error");
       return false;
     }
   },
@@ -751,10 +706,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Habilitación eliminada", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al eliminar habilitación",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al eliminar habilitación", "error");
       return false;
     }
   },
@@ -772,10 +724,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Sub-documento agregado", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al agregar sub-documento",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al agregar sub-documento", "error");
       return false;
     }
   },
@@ -793,10 +742,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Sub-documento actualizado", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al actualizar sub-documento",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al actualizar sub-documento", "error");
       return false;
     }
   },
@@ -814,10 +760,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Sub-documento eliminado", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al eliminar sub-documento",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al eliminar sub-documento", "error");
       return false;
     }
   },
@@ -835,10 +778,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`Documento ${contabilizar ? "contabilizado" : "excluido"}`, "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al cambiar contabilización",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al cambiar contabilización", "error");
       return false;
     }
   },
@@ -855,10 +795,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`Excel sincronizado (${json.data.count} habilitaciones)`, "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al sincronizar Excel",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
       return false;
     }
   },
@@ -879,10 +816,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`Técnico ${t.nombre} agregado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al agregar técnico",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al agregar técnico", "error");
       return false;
     }
   },
@@ -900,10 +834,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Técnico actualizado", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al actualizar técnico",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al actualizar técnico", "error");
       return false;
     }
   },
@@ -921,17 +852,13 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Técnico marcado como inactivo", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al eliminar técnico",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al eliminar técnico", "error");
       return false;
     }
   },
 
   reactivarTecnico: async (id) => {
     try {
-      // Reusa el toggle endpoint con activo=true
       const res = await fetch("/api/tecnico/toggle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -943,10 +870,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Técnico reactivado", "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al reactivar técnico",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al reactivar técnico", "error");
       return false;
     }
   },
@@ -963,10 +887,96 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`Excel sincronizado (${json.data.count} técnicos)`, "ok");
       return true;
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : "Error al sincronizar Excel",
-        "error"
-      );
+      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
+      return false;
+    }
+  },
+
+  // ===== Sedes CRUD (sincroniza Admin ↔ Mapa en tiempo real) =====
+  agregarSede: async (s) => {
+    try {
+      const res = await fetch("/api/sedes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar", ...s }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast(`Sede ${s.nombre} agregada`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al agregar sede", "error");
+      return false;
+    }
+  },
+
+  actualizarSede: async (nombreOriginal, newData) => {
+    try {
+      const res = await fetch("/api/sedes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "actualizar_sede", nombreOriginal, newData }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast("Sede actualizada", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al actualizar sede", "error");
+      return false;
+    }
+  },
+
+  eliminarSede: async (nombre) => {
+    try {
+      const res = await fetch("/api/sedes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar", nombre }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast(`Sede ${nombre} eliminada del Excel y del mapa`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al eliminar sede", "error");
+      return false;
+    }
+  },
+
+  toggleSedeVisible: async (nombre, visible) => {
+    try {
+      const res = await fetch("/api/sedes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "toggle_visible_sede", nombre, visible }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
+      return false;
+    }
+  },
+
+  sincronizarSedesExcel: async () => {
+    try {
+      const res = await fetch("/api/sedes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "sincronizar", sedes: get().sedes }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      get().showToast(`Excel sincronizado (${json.data.count} sedes)`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
       return false;
     }
   },
