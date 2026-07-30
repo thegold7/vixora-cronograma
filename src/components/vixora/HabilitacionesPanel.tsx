@@ -5,11 +5,11 @@ import { useState, useMemo, useEffect } from "react";
 import {
   Search, RefreshCw, ChevronDown, ChevronUp,
   Link as LinkIcon, Pencil, Plus, Trash2, X, Save, Copy,
-  Eye, EyeOff, ChevronsDown, ChevronsUp,
+  Eye, EyeOff, ChevronsDown, ChevronsUp, Layers, Wand2,
 } from "lucide-react";
 import {
   calcularEstadoHabilitacion, calcularEstadoFecha, ESTADO_VISUAL,
-  type EstadoDocumento, type Habilitacion, type SubDocumento,
+  type EstadoDocumento, type Habilitacion, type SubDocumento, type PresetDocumento,
 } from "@/lib/types";
 
 interface Props {
@@ -20,11 +20,16 @@ interface Props {
 
 export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
   const {
-    habilitaciones, cargarHabilitaciones,
+    habilitaciones, sedes, cargarHabilitaciones, cargarPresets, presets,
     agregarHabilitacion, actualizarHabilitacion, eliminarHabilitacion,
     agregarSubDocumento, actualizarSubDocumento, eliminarSubDocumento,
     toggleContabilizarHabilitacion,
-    sincronizarHabilitacionesExcel, showToast,
+    sincronizarHabilitacionesExcel,
+    agregarPresetSede, eliminarPresetSede,
+    agregarPresetDocumento, eliminarPresetDocumento,
+    agregarPresetSubDoc, eliminarPresetSubDoc,
+    aplicarPresetATecnico,
+    showToast,
   } = useStore();
 
   const [query, setQuery] = useState("");
@@ -35,36 +40,19 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
   const [expandirTodas, setExpandirTodas] = useState(false);
   const [actualizando, setActualizando] = useState(false);
   const [filtroEstado, setFiltroEstado] = useState<EstadoDocumento | null>(null);
-  const [agregandoHab, setAgregandoHab] = useState<{ tecnicoId: string; otCodigo: string } | null>(null);
-  const [nuevaHab, setNuevaHab] = useState({
-    documento_nombre: "",
-    fecha_vencimiento: "",
-    enlace_url: "",
-    notas: "",
-  });
-  const [agregandoSubDoc, setAgregandoSubDoc] = useState<string | null>(null);
-  const [nuevoSubDoc, setNuevoSubDoc] = useState({ nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" });
-  const [editandoSubDoc, setEditandoSubDoc] = useState<{ id: string; sub: SubDocumento; parentId: string } | null>(null);
-  const [editandoHab, setEditandoHab] = useState<Habilitacion | null>(null);
   const [replicandoSetup, setReplicandoSetup] = useState<any | null>(null);
+  const [aplicandoPreset, setAplicandoPreset] = useState<any | null>(null);
+
+  // Estado para gestión de presets (al final de la página)
+  const [presetExpandido, setPresetExpandido] = useState<string | null>(null);
+  const [nuevoPresetSede, setNuevoPresetSede] = useState("");
+  const [nuevoDocPreset, setNuevoDocPreset] = useState<{ presetSedeId: string; nombre: string; fecha: string; enlace: string }>({ presetSedeId: "", nombre: "", fecha: "", enlace: "" });
+  const [nuevoSubDocPreset, setNuevoSubDocPreset] = useState<{ presetDocId: string; nombre: string; fecha: string }>({ presetDocId: "", nombre: "", fecha: "" });
 
   useEffect(() => {
     cargarHabilitaciones();
-  }, [cargarHabilitaciones]);
-
-  const otMap = useMemo(() => {
-    const m: Record<string, any> = {};
-    ots.forEach(o => { m[o.codigo] = o; });
-    return m;
-  }, [ots]);
-
-  const tecnicosFiltrados = useMemo(() => {
-    let result = tecnicos.filter(t => t.id && t.nombre && t.id.trim() !== "" && t.nombre.trim() !== "");
-    if (!mostrarInactivos) {
-      result = result.filter(t => t.activo);
-    }
-    return result;
-  }, [tecnicos, mostrarInactivos]);
+    cargarPresets();
+  }, [cargarHabilitaciones, cargarPresets]);
 
   const habilitacionesPorTecnico = useMemo(() => {
     const m: Record<string, Habilitacion[]> = {};
@@ -75,7 +63,14 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return m;
   }, [habilitaciones]);
 
-  // FIX: Resumen general por DOCUMENTOS (no por técnicos)
+  const tecnicosFiltrados = useMemo(() => {
+    let result = tecnicos.filter(t => t.id && t.nombre && t.id.trim() !== "" && t.nombre.trim() !== "");
+    if (!mostrarInactivos) {
+      result = result.filter(t => t.activo);
+    }
+    return result;
+  }, [tecnicos, mostrarInactivos]);
+
   const resumenGeneral = useMemo(() => {
     const conteo: Record<EstadoDocumento, Array<{ tecnico: string; documento: string; sede: string }>> = {
       habilitado: [], por_vencer: [], en_riesgo: [], vencido: [],
@@ -105,17 +100,15 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
           t.cargo.toLowerCase().includes(q);
         if (matchTecnico) return true;
         const habsTec = habilitacionesPorTecnico[t.id] || [];
-        return habsTec.some(h => {
-          const ot = otMap[h.ot_codigo];
-          return h.ot_codigo.toLowerCase().includes(q) ||
-            h.sede_nombre.toLowerCase().includes(q) ||
-            (ot && ot.cliente.toLowerCase().includes(q)) ||
-            h.documento_nombre.toLowerCase().includes(q);
-        });
+        return habsTec.some(h =>
+          h.ot_codigo?.toLowerCase().includes(q) ||
+          h.sede_nombre.toLowerCase().includes(q) ||
+          h.documento_nombre.toLowerCase().includes(q)
+        );
       });
     }
     return result;
-  }, [tecnicosFiltrados, query, habilitacionesPorTecnico, otMap]);
+  }, [tecnicosFiltrados, query, habilitacionesPorTecnico]);
 
   const tecnicosConFiltro = useMemo(() => {
     if (!filtroEstado) return tecnicosFinales;
@@ -155,7 +148,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return partes.length >= 2 ? (partes[0][0] + partes[1][0]).toUpperCase() : nombre.substring(0, 2).toUpperCase();
   };
 
-  // FIX: Calcular resumen general de un técnico (suma de todos sus documentos en todas las sedes)
   const calcularResumenTecnico = (tecId: string) => {
     const habsTec = habilitacionesPorTecnico[tecId] || [];
     const c: Record<EstadoDocumento, number> = { habilitado: 0, por_vencer: 0, en_riesgo: 0, vencido: 0 };
@@ -166,7 +158,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
     return c;
   };
 
-  // Calcular resumen por sede
   const calcularResumenSede = (habs: Habilitacion[]) => {
     const c: Record<EstadoDocumento, number> = { habilitado: 0, por_vencer: 0, en_riesgo: 0, vencido: 0 };
     for (const h of habs) {
@@ -192,7 +183,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
             <div>
               <h2 className="text-2xl font-bold text-gray-900">Habilitaciones</h2>
               <p className="text-sm text-gray-500">
-                Gestión de documentos por técnico y OT · {habilitaciones.length} habilitaciones registradas
+                Gestión de documentos por técnico y sede · {habilitaciones.length} habilitaciones registradas
               </p>
             </div>
             {modoAcceso === "editor" && (
@@ -200,7 +191,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                 <button
                   onClick={handleToggleExpandirTodas}
                   className="flex items-center gap-1 px-3 py-1.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50"
-                  title={expandirTodas ? "Contraer todas las sedes" : "Expandir todas las sedes"}
                 >
                   {expandirTodas ? <ChevronsUp size={14} /> : <ChevronsDown size={14} />}
                   {expandirTodas ? "Contraer todas" : "Expandir todas"}
@@ -217,7 +207,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
             )}
           </div>
 
-          {/* Resumen general delgado */}
+          {/* Resumen general */}
           <div className="grid grid-cols-4 gap-2 mb-4">
             {(["habilitado", "por_vencer", "en_riesgo", "vencido"] as EstadoDocumento[]).map(estado => {
               const items = resumenGeneral[estado];
@@ -303,16 +293,12 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                     tecnicosConFiltro.map((t) => {
                       const habsTec = habilitacionesPorTecnico[t.id] || [];
                       const isSelected = tecnicoSeleccionadoId === t.id;
-
-                      // FIX: Agrupar por sede
                       const habsPorSede: Record<string, Habilitacion[]> = {};
                       for (const h of habsTec) {
                         const sede = h.sede_nombre || "(sin sede)";
                         if (!habsPorSede[sede]) habsPorSede[sede] = [];
                         habsPorSede[sede].push(h);
                       }
-
-                      // FIX: Resumen general del técnico (suma de todos los documentos)
                       const resumenGral = calcularResumenTecnico(t.id);
                       const expandido = !!sedesExpandidasPorTecnico[t.id];
 
@@ -344,7 +330,6 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                               <div className="text-[10px] text-gray-400 italic">Sin habilitaciones</div>
                             ) : (
                               <div className="space-y-1">
-                                {/* FIX: Rectángulo "Resumen General" con 4 estados + flechita desplegable */}
                                 <button
                                   onClick={() => handleToggleSedesTecnico(t.id)}
                                   className="w-full p-2 rounded border-2 border-gray-300 bg-gray-50 hover:bg-gray-100 flex items-center justify-between"
@@ -352,16 +337,15 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                                   <div className="flex items-center gap-2">
                                     <span className="text-[11px] font-bold text-gray-700 uppercase">Resumen General</span>
                                     <div className="flex gap-2 text-[10px] ml-2">
-                                      <span className="flex items-center gap-0.5" title="Habilitados">🟢 {resumenGral.habilitado}</span>
-                                      <span className="flex items-center gap-0.5" title="Por vencer">🟡 {resumenGral.por_vencer}</span>
-                                      <span className="flex items-center gap-0.5" title="En riesgo">🔴 {resumenGral.en_riesgo}</span>
-                                      <span className="flex items-center gap-0.5" title="Vencidos">⚫ {resumenGral.vencido}</span>
+                                      <span title="Habilitados">🟢 {resumenGral.habilitado}</span>
+                                      <span title="Por vencer">🟡 {resumenGral.por_vencer}</span>
+                                      <span title="En riesgo">🔴 {resumenGral.en_riesgo}</span>
+                                      <span title="Vencidos">⚫ {resumenGral.vencido}</span>
                                     </div>
                                   </div>
                                   {expandido ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
                                 </button>
 
-                                {/* FIX: Al desplegar, mostrar cada sede con su resumen */}
                                 {expandido && (
                                   <div className="space-y-1 mt-1 pl-2">
                                     {Object.entries(habsPorSede).map(([sede, habs]) => {
@@ -386,11 +370,11 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
                           <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                             {modoAcceso === "editor" && (
                               <button
-                                onClick={() => setReplicandoSetup(t)}
-                                className="p-1 rounded text-[#E91E63] hover:bg-pink-50"
-                                title="Replicar setup"
+                                onClick={() => setAplicandoPreset(t)}
+                                className="p-1 rounded text-purple-600 hover:bg-purple-100"
+                                title="Aplicar preset de sede"
                               >
-                                <Copy size={14} />
+                                <Wand2 size={14} />
                               </button>
                             )}
                           </td>
@@ -411,15 +395,216 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
             <span className="flex items-center gap-1"><span>🔴</span> En riesgo (≤1 mes)</span>
             <span className="flex items-center gap-1"><span>⚫</span> Vencido</span>
           </div>
+
+          {/* ===== SECCIÓN PRESETS DE SEDES ===== */}
+          {modoAcceso === "editor" && (
+            <div className="mt-6 bg-white border-2 border-purple-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Layers size={18} className="text-purple-600" />
+                  <h3 className="text-sm font-bold text-gray-900">Presets de Sedes (Plantillas)</h3>
+                </div>
+                <p className="text-[10px] text-gray-500">Crea plantillas por sede y aplícalas a los técnicos</p>
+              </div>
+
+              {/* Crear nuevo preset */}
+              <div className="flex gap-2 mb-3">
+                <select
+                  value={nuevoPresetSede}
+                  onChange={(e) => setNuevoPresetSede(e.target.value)}
+                  className="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded bg-white"
+                >
+                  <option value="">Selecciona sede para crear preset...</option>
+                  {sedes.map(s => <option key={s.nombre} value={s.nombre}>{s.nombre}</option>)}
+                </select>
+                <button
+                  onClick={async () => {
+                    if (!nuevoPresetSede) { showToast("Selecciona una sede", "error"); return; }
+                    await agregarPresetSede(nuevoPresetSede);
+                    setNuevoPresetSede("");
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs text-white bg-purple-600 rounded hover:bg-purple-700"
+                >
+                  <Plus size={12} /> Crear preset
+                </button>
+              </div>
+
+              {/* Lista de presets existentes */}
+              {presets.length === 0 ? (
+                <div className="text-center py-4 text-xs text-gray-400 italic">
+                  No hay presets creados. Crea uno seleccionando una sede arriba.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {presets.map(preset => {
+                    const expanded = presetExpandido === preset.id;
+                    return (
+                      <div key={preset.id} className="border border-gray-200 rounded">
+                        <div className="flex items-center justify-between p-2 bg-purple-50">
+                          <button
+                            onClick={() => setPresetExpandido(expanded ? null : preset.id)}
+                            className="flex items-center gap-2 flex-1"
+                          >
+                            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                            <span className="text-xs font-bold text-gray-900">{preset.sede_nombre}</span>
+                            <span className="text-[10px] text-gray-500">{preset.documentos.length} documento(s)</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`¿Eliminar preset de ${preset.sede_nombre}?`)) {
+                                eliminarPresetSede(preset.id);
+                              }
+                            }}
+                            className="p-1 rounded text-red-600 hover:bg-red-100"
+                            title="Eliminar preset"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+
+                        {expanded && (
+                          <div className="p-2 space-y-1">
+                            {preset.documentos.length === 0 ? (
+                              <div className="text-[10px] text-gray-400 italic">Sin documentos. Añade uno abajo.</div>
+                            ) : (
+                              preset.documentos.map(doc => (
+                                <div key={doc.id} className="p-1.5 border border-gray-100 rounded bg-white">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex-1">
+                                      <div className="text-[11px] font-bold text-gray-900">{doc.nombre}</div>
+                                      {doc.fecha_vencimiento && (
+                                        <div className="text-[9px] text-gray-500">Vence: {doc.fecha_vencimiento.split("-").reverse().join("/")}</div>
+                                      )}
+                                      {doc.enlace_url && (
+                                        <a href={doc.enlace_url} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[#E91E63] hover:underline flex items-center gap-1">
+                                          <LinkIcon size={8} /> Ver
+                                        </a>
+                                      )}
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        if (confirm(`¿Eliminar documento ${doc.nombre} del preset?`)) {
+                                          eliminarPresetDocumento(doc.id);
+                                        }
+                                      }}
+                                      className="p-1 rounded text-red-500 hover:bg-red-50"
+                                    >
+                                      <Trash2 size={10} />
+                                    </button>
+                                  </div>
+                                  {/* Sub-documentos */}
+                                  {doc.sub_documentos && doc.sub_documentos.length > 0 && (
+                                    <div className="mt-1 space-y-0.5 pl-2">
+                                      {doc.sub_documentos.map(sub => (
+                                        <div key={sub.id} className="flex items-center gap-1 text-[9px]">
+                                          <span>•</span>
+                                          <span className="text-gray-700">{sub.nombre}</span>
+                                          {sub.fecha_vencimiento && <span className="text-gray-400">· {sub.fecha_vencimiento.split("-").reverse().join("/")}</span>}
+                                          <button
+                                            onClick={() => eliminarPresetSubDoc(sub.id)}
+                                            className="text-red-500 hover:text-red-700 ml-1"
+                                          >
+                                            <Trash2 size={8} />
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {/* Añadir sub-doc */}
+                                  <div className="mt-1 flex gap-1">
+                                    <input
+                                      type="text"
+                                      placeholder="Nombre sub-doc"
+                                      value={nuevoSubDocPreset.presetDocId === doc.id ? nuevoSubDocPreset.nombre : ""}
+                                      onChange={(e) => setNuevoSubDocPreset({ presetDocId: doc.id, nombre: e.target.value, fecha: nuevoSubDocPreset.presetDocId === doc.id ? nuevoSubDocPreset.fecha : "" })}
+                                      className="flex-1 px-1 py-0.5 text-[9px] border border-gray-200 rounded"
+                                    />
+                                    <input
+                                      type="date"
+                                      value={nuevoSubDocPreset.presetDocId === doc.id ? nuevoSubDocPreset.fecha : ""}
+                                      onChange={(e) => setNuevoSubDocPreset({ presetDocId: doc.id, nombre: nuevoSubDocPreset.presetDocId === doc.id ? nuevoSubDocPreset.nombre : "", fecha: e.target.value })}
+                                      className="w-32 px-1 py-0.5 text-[9px] border border-gray-200 rounded"
+                                    />
+                                    <button
+                                      onClick={async () => {
+                                        if (!nuevoSubDocPreset.nombre || !nuevoSubDocPreset.fecha) {
+                                          showToast("Nombre y fecha obligatorios", "error");
+                                          return;
+                                        }
+                                        await agregarPresetSubDoc(doc.id, {
+                                          nombre: nuevoSubDocPreset.nombre,
+                                          fecha_vencimiento: nuevoSubDocPreset.fecha,
+                                        });
+                                        setNuevoSubDocPreset({ presetDocId: "", nombre: "", fecha: "" });
+                                      }}
+                                      className="px-2 py-0.5 text-[9px] text-white bg-purple-600 rounded hover:bg-purple-700"
+                                    >
+                                      + Sub
+                                    </button>
+                                  </div>
+                                </div>
+                              ))
+                            )}
+
+                            {/* Añadir documento */}
+                            <div className="mt-2 p-2 bg-gray-50 rounded space-y-1">
+                              <div className="text-[9px] font-bold text-gray-700">Añadir documento al preset</div>
+                              <input
+                                type="text"
+                                placeholder="Nombre documento (ej: EMO, Curso Alturas)"
+                                value={nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.nombre : ""}
+                                onChange={(e) => setNuevoDocPreset({ presetSedeId: preset.id, nombre: e.target.value, fecha: nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.fecha : "", enlace: nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.enlace : "" })}
+                                className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded"
+                              />
+                              <div className="flex gap-1">
+                                <input
+                                  type="date"
+                                  value={nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.fecha : ""}
+                                  onChange={(e) => setNuevoDocPreset({ presetSedeId: preset.id, nombre: nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.nombre : "", fecha: e.target.value, enlace: nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.enlace : "" })}
+                                  className="flex-1 px-1 py-1 text-[10px] border border-gray-200 rounded"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="URL (opcional)"
+                                  value={nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.enlace : ""}
+                                  onChange={(e) => setNuevoDocPreset({ presetSedeId: preset.id, nombre: nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.nombre : "", fecha: nuevoDocPreset.presetSedeId === preset.id ? nuevoDocPreset.fecha : "", enlace: e.target.value })}
+                                  className="flex-1 px-1 py-1 text-[10px] border border-gray-200 rounded"
+                                />
+                              </div>
+                              <button
+                                onClick={async () => {
+                                  if (!nuevoDocPreset.nombre) { showToast("Nombre obligatorio", "error"); return; }
+                                  await agregarPresetDocumento(preset.id, {
+                                    nombre: nuevoDocPreset.nombre,
+                                    fecha_vencimiento: nuevoDocPreset.fecha || undefined,
+                                    enlace_url: nuevoDocPreset.enlace || undefined,
+                                  });
+                                  setNuevoDocPreset({ presetSedeId: "", nombre: "", fecha: "", enlace: "" });
+                                }}
+                                className="w-full py-1 text-[10px] text-white bg-purple-600 rounded hover:bg-purple-700 flex items-center justify-center gap-1"
+                              >
+                                <Plus size={10} /> Añadir documento
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Sidebar derecho del técnico seleccionado */}
+      {/* Sidebar derecho del técnico */}
       {tecnicoSeleccionado && sidebarVisible && (
         <SidebarTecnicoHabilitaciones
           tecnico={tecnicoSeleccionado}
           habilitaciones={habilitacionesTecnicoSel}
           ots={ots}
+          sedes={sedes}
           modoAcceso={modoAcceso}
           onClose={() => setTecnicoSeleccionadoId(null)}
           onHide={() => setSidebarVisible(false)}
@@ -435,7 +620,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
         />
       )}
 
-      {/* Modal replicar setup */}
+      {/* Modal replicar setup (copia individual) */}
       {replicandoSetup && (
         <ModalReplicarSetup
           tecnicoOrigen={replicandoSetup}
@@ -470,6 +655,19 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
           }}
         />
       )}
+
+      {/* Modal aplicar preset */}
+      {aplicandoPreset && (
+        <ModalAplicarPreset
+          tecnico={aplicandoPreset}
+          presets={presets}
+          onClose={() => setAplicandoPreset(null)}
+          onAplicar={async (presetSedeId, copiarFechas) => {
+            await aplicarPresetATecnico(presetSedeId, aplicandoPreset.id, copiarFechas);
+            setAplicandoPreset(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -478,7 +676,7 @@ export function HabilitacionesPanel({ tecnicos, ots, modoAcceso }: Props) {
 // SUBCOMPONENTE: Sidebar derecho del técnico
 // =============================================================
 function SidebarTecnicoHabilitaciones({
-  tecnico, habilitaciones, ots, modoAcceso,
+  tecnico, habilitaciones, ots, sedes, modoAcceso,
   onClose, onHide,
   onAgregarHabilitacion, onActualizarHabilitacion, onEliminarHabilitacion,
   onAgregarSubDoc, onActualizarSubDoc, onEliminarSubDoc,
@@ -488,6 +686,7 @@ function SidebarTecnicoHabilitaciones({
   tecnico: any;
   habilitaciones: Habilitacion[];
   ots: any[];
+  sedes: any[];
   modoAcceso: "lector" | "editor";
   onClose: () => void;
   onHide: () => void;
@@ -502,14 +701,12 @@ function SidebarTecnicoHabilitaciones({
   showToast: (msg: string, tipo?: "ok" | "error" | "info") => void;
 }) {
   const [sedeExpandida, setSedeExpandida] = useState<string | null>(null);
-  const [agregandoHab, setAgregandoHab] = useState(false);
-  const [nuevaHab, setNuevaHab] = useState({
-    ot_codigo: "",
-    documento_nombre: "",
-    fecha_vencimiento: "",
-    enlace_url: "",
-    notas: "",
-  });
+  // FIX: ahora elegimos sede primero, OT opcional
+  const [nuevaSedeSel, setNuevaSedeSel] = useState("");
+  const [nuevaOtSel, setNuevaOtSel] = useState("");
+  const [nuevoDocNombre, setNuevoDocNombre] = useState("");
+  const [nuevoDocFecha, setNuevoDocFecha] = useState("");
+  const [nuevoDocEnlace, setNuevoDocEnlace] = useState("");
   const [agregandoSubDoc, setAgregandoSubDoc] = useState<string | null>(null);
   const [nuevoSubDoc, setNuevoSubDoc] = useState({ nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" });
   const [editandoSubDoc, setEditandoSubDoc] = useState<{ id: string; sub: SubDocumento; parentId: string } | null>(null);
@@ -525,11 +722,11 @@ function SidebarTecnicoHabilitaciones({
     return grupos;
   }, [habilitaciones]);
 
-  const otMap = useMemo(() => {
-    const m: Record<string, any> = {};
-    ots.forEach(o => { m[o.codigo] = o; });
-    return m;
-  }, [ots]);
+  // OTs filtradas por sede seleccionada (para el dropdown de OT opcional)
+  const otsDeSedeSel = useMemo(() => {
+    if (!nuevaSedeSel) return [];
+    return ots.filter(o => o.sede === nuevaSedeSel);
+  }, [ots, nuevaSedeSel]);
 
   const calcularResumenSede = (habs: Habilitacion[]) => {
     const c: Record<EstadoDocumento, number> = { habilitado: 0, por_vencer: 0, en_riesgo: 0, vencido: 0 };
@@ -545,24 +742,25 @@ function SidebarTecnicoHabilitaciones({
     return partes.length >= 2 ? (partes[0][0] + partes[1][0]).toUpperCase() : nombre.substring(0, 2).toUpperCase();
   };
 
-  const handleGuardarNuevaHab = async () => {
-    if (!nuevaHab.ot_codigo || !nuevaHab.documento_nombre) {
-      showToast("OT y documento son obligatorios", "error");
+  const handleAgregarHab = async () => {
+    if (!nuevaSedeSel || !nuevoDocNombre) {
+      showToast("Sede y nombre de documento son obligatorios", "error");
       return;
     }
-    const ot = otMap[nuevaHab.ot_codigo];
     const ok = await onAgregarHabilitacion({
       tecnico_id: tecnico.id,
-      ot_codigo: nuevaHab.ot_codigo,
-      sede_nombre: ot?.sede || "",
-      documento_nombre: nuevaHab.documento_nombre,
-      fecha_vencimiento: nuevaHab.fecha_vencimiento || undefined,
-      enlace_url: nuevaHab.enlace_url || undefined,
-      notas: nuevaHab.notas || undefined,
+      sede_nombre: nuevaSedeSel,
+      ot_codigo: nuevaOtSel || undefined,
+      documento_nombre: nuevoDocNombre,
+      fecha_vencimiento: nuevoDocFecha || undefined,
+      enlace_url: nuevoDocEnlace || undefined,
     });
     if (ok) {
-      setAgregandoHab(false);
-      setNuevaHab({ ot_codigo: "", documento_nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" });
+      setNuevaSedeSel("");
+      setNuevaOtSel("");
+      setNuevoDocNombre("");
+      setNuevoDocFecha("");
+      setNuevoDocEnlace("");
     }
   };
 
@@ -585,7 +783,6 @@ function SidebarTecnicoHabilitaciones({
 
   return (
     <aside className="w-96 shrink-0 border-l border-gray-200 bg-white flex flex-col">
-      {/* Header */}
       <div className="p-3 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
         <div className="text-xs font-bold text-white uppercase">Detalle del Técnico</div>
         <div className="flex items-center gap-1">
@@ -599,7 +796,7 @@ function SidebarTecnicoHabilitaciones({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* Foto vertical + datos */}
+        {/* Foto + datos */}
         <div className="p-4 border-b border-gray-200 flex gap-3">
           <div className="w-24 h-32 rounded-lg overflow-hidden border-2 border-[#E91E63] bg-gray-200 shrink-0">
             {tecnico.foto_url ? (
@@ -627,7 +824,7 @@ function SidebarTecnicoHabilitaciones({
           </div>
         </div>
 
-        {/* Habilitaciones por sede (con 4 estados visibles en el header) */}
+        {/* Habilitaciones por sede */}
         <div className="p-3">
           <div className="text-[10px] font-bold text-gray-500 uppercase mb-2">Habilitaciones por Sede</div>
 
@@ -642,7 +839,6 @@ function SidebarTecnicoHabilitaciones({
                 const expanded = sedeExpandida === sede;
                 return (
                   <div key={sede} className="border border-gray-200 rounded">
-                    {/* Header con sede + 4 estados al costado */}
                     <div className="flex items-center justify-between p-2 bg-gray-50">
                       <button
                         onClick={() => setSedeExpandida(expanded ? null : sede)}
@@ -659,23 +855,24 @@ function SidebarTecnicoHabilitaciones({
                       </div>
                     </div>
 
-                    {/* Desplegar documentos */}
                     {expanded && (
                       <div className="p-2 space-y-1">
+                        {/* FIX: Agrupar por OT dentro de la sede (si tiene OT) */}
                         {Object.entries(
                           habs.reduce((acc, h) => {
-                            if (!acc[h.ot_codigo]) acc[h.ot_codigo] = [];
-                            acc[h.ot_codigo].push(h);
+                            const otKey = h.ot_codigo || "(sin OT)";
+                            if (!acc[otKey]) acc[otKey] = [];
+                            acc[otKey].push(h);
                             return acc;
                           }, {} as Record<string, Habilitacion[]>)
                         ).map(([otCodigo, habsOt]) => {
-                          const ot = otMap[otCodigo];
                           return (
                             <div key={otCodigo} className="border border-gray-100 rounded p-1.5 bg-white">
-                              <div className="text-[10px] font-mono font-semibold text-gray-900 mb-1">
-                                {otCodigo}
-                                {ot && <span className="text-gray-500"> · {ot.cliente}</span>}
-                              </div>
+                              {otCodigo !== "(sin OT)" && (
+                                <div className="text-[10px] font-mono font-semibold text-gray-900 mb-1">
+                                  {otCodigo}
+                                </div>
+                              )}
                               <div className="space-y-1">
                                 {habsOt.map(h => {
                                   const estado = calcularEstadoHabilitacion(h);
@@ -684,7 +881,6 @@ function SidebarTecnicoHabilitaciones({
                                   const isEditing = editandoHab?.id === h.id;
                                   return (
                                     <div key={h.id} className="p-1.5 rounded border" style={{ borderColor: visual.border, backgroundColor: contab ? visual.bg : "#f9f9f9", opacity: contab ? 1 : 0.6 }}>
-                                      {/* FIX: Modo edición del documento padre */}
                                       {isEditing ? (
                                         <div className="space-y-1">
                                           <div className="text-[9px] font-bold text-blue-700">Editando documento</div>
@@ -773,7 +969,6 @@ function SidebarTecnicoHabilitaciones({
                                             </div>
                                             {modoAcceso === "editor" && (
                                               <div className="flex flex-col gap-0.5">
-                                                {/* FIX: Botón editar documento padre */}
                                                 <button
                                                   onClick={() => setEditandoHab(h)}
                                                   className="p-0.5 rounded text-blue-600 hover:bg-blue-100"
@@ -781,7 +976,6 @@ function SidebarTecnicoHabilitaciones({
                                                 >
                                                   <Pencil size={9} />
                                                 </button>
-                                                {/* Toggle contabilizar */}
                                                 <button
                                                   onClick={() => onToggleContabilizar(h.id, !contab, false)}
                                                   className={`p-0.5 rounded ${contab ? "text-green-600 hover:bg-green-100" : "text-gray-400 hover:bg-gray-200"}`}
@@ -817,234 +1011,4 @@ function SidebarTecnicoHabilitaciones({
                                             <div className="mt-1 p-1 bg-white rounded border border-blue-200 space-y-1">
                                               <div className="text-[9px] font-bold text-blue-700">Editando sub-documento</div>
                                               <input type="text" value={editandoSubDoc.sub.nombre} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, nombre: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                              <input type="date" value={editandoSubDoc.sub.fecha_vencimiento} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, fecha_vencimiento: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                              <input type="text" placeholder="URL" value={editandoSubDoc.sub.enlace_url || ""} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, enlace_url: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                              <div className="flex gap-1">
-                                                <button
-                                                  onClick={async () => {
-                                                    await onActualizarSubDoc(editandoSubDoc.id, editandoSubDoc.sub);
-                                                    setEditandoSubDoc(null);
-                                                  }}
-                                                  className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]"
-                                                >
-                                                  Guardar
-                                                </button>
-                                                <button onClick={() => setEditandoSubDoc(null)} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
-                                              </div>
-                                            </div>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-
-                              {/* Agregar nueva habilitación a esta OT */}
-                              {modoAcceso === "editor" && agregandoHab?.tecnicoId === tecnico.id && agregandoHab?.otCodigo === otCodigo ? (
-                                <div className="mt-1 p-1.5 bg-gray-50 rounded border border-gray-200 space-y-1">
-                                  <div className="text-[9px] font-bold text-gray-700">Nueva habilitación</div>
-                                  <input type="text" placeholder="Nombre (ej: EMO, Curso Alturas)" value={nuevaHab.documento_nombre} onChange={(e) => setNuevaHab({...nuevaHab, documento_nombre: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                  <input type="date" value={nuevaHab.fecha_vencimiento} onChange={(e) => setNuevaHab({...nuevaHab, fecha_vencimiento: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                  <input type="text" placeholder="Enlace URL" value={nuevaHab.enlace_url} onChange={(e) => setNuevaHab({...nuevaHab, enlace_url: e.target.value})} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                  <div className="flex gap-1">
-                                    <button
-                                      onClick={async () => {
-                                        if (!nuevaHab.documento_nombre) {
-                                          showToast("Nombre obligatorio", "error");
-                                          return;
-                                        }
-                                        const ot = otMap[otCodigo];
-                                        await onAgregarHabilitacion({
-                                          tecnico_id: tecnico.id,
-                                          ot_codigo: otCodigo,
-                                          sede_nombre: ot?.sede || "",
-                                          documento_nombre: nuevaHab.documento_nombre,
-                                          fecha_vencimiento: nuevaHab.fecha_vencimiento || undefined,
-                                          enlace_url: nuevaHab.enlace_url || undefined,
-                                          notas: nuevaHab.notas || undefined,
-                                        });
-                                        setAgregandoHab(null);
-                                        setNuevaHab({ ot_codigo: "", documento_nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" });
-                                      }}
-                                      className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]"
-                                    >
-                                      Guardar
-                                    </button>
-                                    <button onClick={() => { setAgregandoHab(null); setNuevaHab({ ot_codigo: "", documento_nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" }); }} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
-                                  </div>
-                                </div>
-                              ) : (
-                                modoAcceso === "editor" && (
-                                  <button
-                                    onClick={() => setAgregandoHab({ tecnicoId: tecnico.id, otCodigo })}
-                                    className="text-[9px] text-[#E91E63] hover:underline flex items-center gap-0.5 mt-1"
-                                  >
-                                    <Plus size={9} /> Añadir habilitación
-                                  </button>
-                                )
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Añadir OT completa */}
-          {modoAcceso === "editor" && !agregandoHab && (
-            <div className="mt-3 p-2 bg-gray-50 rounded border border-gray-200 space-y-1">
-              <div className="text-[10px] font-bold text-gray-700">Añadir habilitación eligiendo OT</div>
-              <select
-                value={nuevaHab.ot_codigo}
-                onChange={(e) => setNuevaHab({...nuevaHab, ot_codigo: e.target.value})}
-                className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded bg-white"
-              >
-                <option value="">Selecciona OT...</option>
-                {ots.map(o => <option key={o.codigo} value={o.codigo}>{o.codigo} - {o.cliente} ({o.sede})</option>)}
-              </select>
-              <input type="text" placeholder="Nombre documento" value={nuevaHab.documento_nombre} onChange={(e) => setNuevaHab({...nuevaHab, documento_nombre: e.target.value})} className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded" />
-              <input type="date" value={nuevaHab.fecha_vencimiento} onChange={(e) => setNuevaHab({...nuevaHab, fecha_vencimiento: e.target.value})} className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded" />
-              <input type="text" placeholder="Enlace URL (opcional)" value={nuevaHab.enlace_url} onChange={(e) => setNuevaHab({...nuevaHab, enlace_url: e.target.value})} className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded" />
-              <button
-                onClick={async () => {
-                  if (!nuevaHab.ot_codigo || !nuevaHab.documento_nombre) {
-                    showToast("OT y documento obligatorios", "error");
-                    return;
-                  }
-                  const ot = otMap[nuevaHab.ot_codigo];
-                  await onAgregarHabilitacion({
-                    tecnico_id: tecnico.id,
-                    ot_codigo: nuevaHab.ot_codigo,
-                    sede_nombre: ot?.sede || "",
-                    documento_nombre: nuevaHab.documento_nombre,
-                    fecha_vencimiento: nuevaHab.fecha_vencimiento || undefined,
-                    enlace_url: nuevaHab.enlace_url || undefined,
-                    notas: nuevaHab.notas || undefined,
-                  });
-                  setNuevaHab({ ot_codigo: "", documento_nombre: "", fecha_vencimiento: "", enlace_url: "", notas: "" });
-                }}
-                className="w-full py-1 text-[10px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b] flex items-center justify-center gap-1"
-              >
-                <Plus size={10} /> Añadir habilitación
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-// =============================================================
-// SUBCOMPONENTE: Modal replicar setup
-// =============================================================
-function ModalReplicarSetup({
-  tecnicoOrigen, tecnicosDestino, habilitacionesOrigen, onClose, onReplicar,
-}: {
-  tecnicoOrigen: any;
-  tecnicosDestino: any[];
-  habilitacionesOrigen: Habilitacion[];
-  onClose: () => void;
-  onReplicar: (destinoIds: string[], copiarEstructura: boolean) => Promise<void>;
-}) {
-  const [seleccionados, setSeleccionados] = useState<string[]>([]);
-  const [copiarEstructura, setCopiarEstructura] = useState(true);
-  const [busqueda, setBusqueda] = useState("");
-  const [replicando, setReplicando] = useState(false);
-
-  const tecnicosFiltrados = useMemo(() => {
-    if (!busqueda) return tecnicosDestino;
-    const q = busqueda.toLowerCase();
-    return tecnicosDestino.filter(t =>
-      t.id.toLowerCase().includes(q) ||
-      t.nombre.toLowerCase().includes(q) ||
-      t.cargo.toLowerCase().includes(q)
-    );
-  }, [tecnicosDestino, busqueda]);
-
-  const toggleSeleccion = (id: string) => {
-    setSeleccionados(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
-
-  const seleccionarTodos = () => {
-    if (seleccionados.length === tecnicosFiltrados.length) {
-      setSeleccionados([]);
-    } else {
-      setSeleccionados(tecnicosFiltrados.map(t => t.id));
-    }
-  };
-
-  const handleReplicar = async () => {
-    if (seleccionados.length === 0) {
-      alert("Selecciona al menos un técnico destino");
-      return;
-    }
-    if (!confirm(`¿Replicar ${habilitacionesOrigen.length} habilitacion(es) a ${seleccionados.length} técnico(s)?`)) return;
-    setReplicando(true);
-    await onReplicar(seleccionados, copiarEstructura);
-    setReplicando(false);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-2xl w-[95%] max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="px-4 py-3 flex items-center justify-between text-white" style={{ backgroundColor: "#1d1d1f" }}>
-          <div>
-            <div className="text-sm font-bold">Replicar setup de habilitaciones</div>
-            <div className="text-[10px] text-white/60">Origen: {tecnicoOrigen.nombre} · {habilitacionesOrigen.length} documento(s)</div>
-          </div>
-          <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18} /></button>
-        </div>
-        <div className="p-4 space-y-3 overflow-y-auto flex-1">
-          <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-            <input type="checkbox" checked={copiarEstructura} onChange={(e) => setCopiarEstructura(e.target.checked)} />
-            <span>Solo estructura (sin fechas) — recomendado. Si desmarcas, se copiarán también las fechas de vencimiento.</span>
-          </label>
-
-          <div className="flex gap-2 items-center">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input type="text" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar técnico destino..." className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded" />
-            </div>
-            <button onClick={seleccionarTodos} className="text-xs text-[#E91E63] hover:underline">
-              {seleccionados.length === tecnicosFiltrados.length ? "Quitar todos" : "Seleccionar todos"}
-            </button>
-          </div>
-
-          <div className="border border-gray-200 rounded max-h-96 overflow-y-auto">
-            {tecnicosFiltrados.length === 0 ? (
-              <div className="p-4 text-center text-xs text-gray-400">No hay técnicos disponibles</div>
-            ) : (
-              tecnicosFiltrados.map(t => (
-                <label key={t.id} className="flex items-center gap-2 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
-                  <input type="checkbox" checked={seleccionados.includes(t.id)} onChange={() => toggleSeleccion(t.id)} />
-                  <div className="flex-1">
-                    <div className="text-xs font-semibold text-gray-900">{t.nombre}</div>
-                    <div className="text-[10px] text-gray-500">{t.cargo} · {t.id}</div>
-                  </div>
-                </label>
-              ))
-            )}
-          </div>
-
-          <div className="text-[10px] text-gray-500">
-            {seleccionados.length} técnico(s) seleccionado(s) · Se crearán {seleccionados.length * habilitacionesOrigen.length} habilitación(es) en total
-          </div>
-        </div>
-        <div className="border-t border-gray-200 p-3 flex justify-end gap-2">
-          <button onClick={onClose} disabled={replicando} className="px-3 py-1.5 text-xs border border-gray-200 rounded hover:bg-gray-50">Cancelar</button>
-          <button onClick={handleReplicar} disabled={replicando || seleccionados.length === 0} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b] disabled:opacity-50">
-            <Copy size={14} /> {replicando ? "Replicando..." : `Replicar a ${seleccionados.length}`}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+                                              <input type="date" value={editandoSubDoc.sub.fecha_vencimiento} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, fecha_vencimiento: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px]
