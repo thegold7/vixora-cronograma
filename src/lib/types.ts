@@ -84,22 +84,20 @@ export interface SubDocumento {
   fecha_vencimiento: string;
   enlace_url?: string;
   notas?: string;
-  /** Si es false, no se contabiliza en los estados generales (histórico) */
   contabilizar?: boolean;
 }
 
 export interface Habilitacion {
   id: string;
   tecnico_id: string;
-  tecnico_nombre?: string; // cache para mostrar en Excel sin join
-  ot_codigo: string;
-  sede_nombre: string;
+  tecnico_nombre?: string;
+  sede_nombre: string;          // obligatorio
+  ot_codigo?: string;           // opcional (puede ser solo por sede)
   documento_nombre: string;
   sub_documentos?: SubDocumento[];
   fecha_vencimiento?: string;
   enlace_url?: string;
   notas?: string;
-  /** Si es false, no se contabiliza en los estados generales (histórico) */
   contabilizar?: boolean;
 }
 
@@ -115,8 +113,7 @@ export function calcularEstadoFecha(fechaVenc: string, hoy: Date = new Date()): 
 }
 
 export function calcularEstadoHabilitacion(h: Habilitacion, hoy: Date = new Date()): EstadoDocumento {
-  // FIX: Si contabilizar=false, ignorar completamente (no aporta estado)
-  if (h.contabilizar === false) return "habilitado"; // no afecta conteos
+  if (h.contabilizar === false) return "habilitado";
   if (h.sub_documentos && h.sub_documentos.length > 0) {
     const subDocContables = h.sub_documentos.filter(s => s.contabilizar !== false);
     if (subDocContables.length === 0) return "habilitado";
@@ -134,10 +131,8 @@ export function calcularEstadoHabilitacion(h: Habilitacion, hoy: Date = new Date
   return "vencido";
 }
 
-/** FIX: Para conteos reales, contar también los no-contabilizables como "omitido".
- *  Esta función devuelve el estado real sin filtrar por contabilizar. */
 export function calcularEstadoHabilitacionReal(h: Habilitacion, hoy: Date = new Date()): EstadoDocumento | null {
-  if (h.contabilizar === false) return null; // no se cuenta
+  if (h.contabilizar === false) return null;
   if (h.sub_documentos && h.sub_documentos.length > 0) {
     const subDocContables = h.sub_documentos.filter(s => s.contabilizar !== false);
     if (subDocContables.length === 0) return null;
@@ -168,3 +163,22 @@ export const ESTADO_VISUAL: Record<EstadoDocumento, {
   en_riesgo: { label: "En riesgo", icon: "🔴", color: "#b3261e", bg: "#fdeaea", border: "#b3261e", shape: "square" },
   vencido: { label: "Vencido", icon: "⚫", color: "#444444", bg: "#eeeeee", border: "#444444", shape: "diamond" },
 };
+
+// ============================================================
+// PRESETS DE SEDES (plantillas de documentos por sede)
+// ============================================================
+
+export interface PresetDocumento {
+  id: string;
+  nombre: string;
+  fecha_vencimiento?: string;   // opcional (puede no tener fecha)
+  enlace_url?: string;
+  notas?: string;
+  sub_documentos?: SubDocumento[];
+}
+
+export interface PresetSede {
+  id: string;
+  sede_nombre: string;
+  documentos: PresetDocumento[];
+}
