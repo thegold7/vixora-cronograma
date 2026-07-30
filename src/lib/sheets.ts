@@ -10,6 +10,8 @@ import type {
   Sede,
   Habilitacion,
   SubDocumento,
+  PresetSede,
+  PresetDocumento,
 } from "./types";
 
 let client: sheets_v4.Sheets | null = null;
@@ -20,9 +22,7 @@ function getClient(): sheets_v4.Sheets {
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY ?? "";
   if (!sheetId || !clientEmail || !privateKeyRaw) {
-    throw new Error(
-      "Faltan variables de entorno de Google Sheets. Configura GOOGLE_SHEETS_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL y GOOGLE_PRIVATE_KEY en Vercel."
-    );
+    throw new Error("Faltan variables de entorno de Google Sheets.");
   }
   const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
   const jwt = new google.auth.JWT({
@@ -36,17 +36,11 @@ function getClient(): sheets_v4.Sheets {
 
 function getSheetId(): string {
   const id = process.env.GOOGLE_SHEETS_ID;
-  if (!id) {
-    throw new Error("Falta GOOGLE_SHEETS_ID en variables de entorno");
-  }
+  if (!id) throw new Error("Falta GOOGLE_SHEETS_ID");
   return id;
 }
 
-/** Lee todos los valores de una hoja, saltando el header */
-async function readSheet<T>(
-  sheetName: string,
-  mapper: (row: string[]) => T
-): Promise<T[]> {
+async function readSheet<T>(sheetName: string, mapper: (row: string[]) => T): Promise<T[]> {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: getSheetId(),
@@ -59,7 +53,7 @@ async function readSheet<T>(
 }
 
 // ============================================================
-// LECTURA — TÉCNICOS
+// TÉCNICOS
 // ============================================================
 export async function getTecnicos(): Promise<Tecnico[]> {
   return readSheet("Tecnicos", (r) => ({
@@ -80,7 +74,7 @@ export async function getTecnicosActivos(): Promise<Tecnico[]> {
 }
 
 // ============================================================
-// LECTURA — OTs
+// OTs
 // ============================================================
 export async function getOTs(): Promise<OT[]> {
   return readSheet("OTs", (r) => ({
@@ -99,7 +93,7 @@ export async function getOTsActivas(): Promise<OT[]> {
 }
 
 // ============================================================
-// LECTURA — ACTIVIDADES
+// ACTIVIDADES
 // ============================================================
 export async function getActividades(): Promise<Actividad[]> {
   return readSheet("Actividades", (r) => ({
@@ -111,7 +105,7 @@ export async function getActividades(): Promise<Actividad[]> {
 }
 
 // ============================================================
-// LECTURA — CRONOGRAMA
+// CRONOGRAMA
 // ============================================================
 export async function getCronograma(): Promise<EntradaCronograma[]> {
   return readSheet("_Cronograma_Datos", (r) => ({
@@ -137,7 +131,7 @@ export async function getCronogramaMap(): Promise<Record<string, EntradaCronogra
 }
 
 // ============================================================
-// ESCRITURA — UPDERT entrada de cronograma
+// CRONOGRAMA - UPDERT
 // ============================================================
 async function getNextId(): Promise<string> {
   const sheets = getClient();
@@ -156,25 +150,13 @@ async function getNextId(): Promise<string> {
 }
 
 export async function upsertEntradaCronograma(
-  params: {
-    tecnico_id: string;
-    fecha: string;
-    actividad: string;
-    ots_asignadas: string;
-    detalle: string;
-    notas: string;
-    modificado_por: string;
-  }
+  params: { tecnico_id: string; fecha: string; actividad: string; ots_asignadas: string; detalle: string; notas: string; modificado_por: string; }
 ): Promise<{ ok: true; id: string }> {
   const sheets = getClient();
   const all = await getCronograma();
-  const idx = all.findIndex(
-    (e) => e.tecnico_id === params.tecnico_id && e.fecha === params.fecha
-  );
-
+  const idx = all.findIndex((e) => e.tecnico_id === params.tecnico_id && e.fecha === params.fecha);
   const now = new Date();
   const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-
   if (idx >= 0) {
     const existing = all[idx];
     const rowNumber = idx + 2;
@@ -217,7 +199,7 @@ export async function deleteEntradaCronograma(tecnico_id: string, fecha: string)
 }
 
 // ============================================================
-// ESCRITURA — TÉCNICOS
+// TÉCNICOS - ESCRITURA
 // ============================================================
 export async function toggleTecnicoActivo(tecnicoId: string, nuevoEstado: boolean): Promise<{ ok: true }> {
   const sheets = getClient();
@@ -236,29 +218,19 @@ export async function toggleTecnicoActivo(tecnicoId: string, nuevoEstado: boolea
   return { ok: true };
 }
 
-export async function addTecnico(tecnico: {
-  id: string; cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string;
-}): Promise<{ ok: true }> {
+export async function addTecnico(tecnico: { id: string; cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string; }): Promise<{ ok: true }> {
   const sheets = getClient();
   const all = await getTecnicos();
-  if (all.some((t) => t.id === tecnico.id)) {
-    throw new Error(`Ya existe un técnico con ID ${tecnico.id}`);
-  }
+  if (all.some((t) => t.id === tecnico.id)) throw new Error(`Ya existe un técnico con ID ${tecnico.id}`);
   const values = [[tecnico.id, tecnico.cargo, tecnico.nombre, tecnico.correo, tecnico.codigo_sap, "Activo", "TRUE", tecnico.foto_url || ""]];
   await sheets.spreadsheets.values.append({
-    spreadsheetId: getSheetId(),
-    range: "Tecnicos!A:H",
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values },
+    spreadsheetId: getSheetId(), range: "Tecnicos!A:H",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
   });
   return { ok: true };
 }
 
-export async function updateTecnico(
-  tecnicoId: string,
-  newData: { cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string }
-): Promise<{ ok: true }> {
+export async function updateTecnico(tecnicoId: string, newData: { cargo: string; nombre: string; correo: string; codigo_sap: string; foto_url?: string }): Promise<{ ok: true }> {
   const sheets = getClient();
   const all = await getTecnicos();
   const idx = all.findIndex((t) => t.id === tecnicoId);
@@ -266,12 +238,9 @@ export async function updateTecnico(
   const rowNumber = idx + 2;
   const existing = all[idx];
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `Tecnicos!A${rowNumber}:H${rowNumber}`,
+    spreadsheetId: getSheetId(), range: `Tecnicos!A${rowNumber}:H${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [[existing.id, newData.cargo, newData.nombre, newData.correo, newData.codigo_sap, existing.estado, existing.activo ? "TRUE" : "FALSE", newData.foto_url || ""]],
-    },
+    requestBody: { values: [[existing.id, newData.cargo, newData.nombre, newData.correo, newData.codigo_sap, existing.estado, existing.activo ? "TRUE" : "FALSE", newData.foto_url || ""]] },
   });
   return { ok: true };
 }
@@ -283,16 +252,14 @@ export async function deleteTecnicoLogico(tecnicoId: string): Promise<{ ok: true
   if (idx < 0) throw new Error(`Técnico ${tecnicoId} no encontrado`);
   const rowNumber = idx + 2;
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `Tecnicos!F${rowNumber}:G${rowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [["Inactivo", "FALSE"]] },
+    spreadsheetId: getSheetId(), range: `Tecnicos!F${rowNumber}:G${rowNumber}`,
+    valueInputOption: "USER_ENTERED", requestBody: { values: [["Inactivo", "FALSE"]] },
   });
   return { ok: true };
 }
 
 // ============================================================
-// ESCRITURA — OTs
+// OTs - ESCRITURA
 // ============================================================
 export async function updateOtEstado(codigo: string, nuevoEstado: string): Promise<{ ok: true }> {
   const sheets = getClient();
@@ -303,8 +270,7 @@ export async function updateOtEstado(codigo: string, nuevoEstado: string): Promi
   const estadoUpper = nuevoEstado.toUpperCase();
   const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `OTs!D${rowNumber}:F${rowNumber}`,
+    spreadsheetId: getSheetId(), range: `OTs!D${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[estadoUpper, activo, all[idx].visible_mapa !== false ? "TRUE" : "FALSE"]] },
   });
@@ -316,16 +282,11 @@ export async function addOt(codigo: string, cliente: string, sede: string, estad
   const estadoUpper = estado.toUpperCase();
   const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
   const all = await getOTs();
-  if (all.some((o) => o.codigo === codigo)) {
-    throw new Error(`Ya existe una OT con código ${codigo}`);
-  }
+  if (all.some((o) => o.codigo === codigo)) throw new Error(`Ya existe una OT con código ${codigo}`);
   const values = [[codigo, cliente, sede, estadoUpper, activo, "TRUE"]];
   await sheets.spreadsheets.values.append({
-    spreadsheetId: getSheetId(),
-    range: "OTs!A:F",
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values },
+    spreadsheetId: getSheetId(), range: "OTs!A:F",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
   });
   return { ok: true };
 }
@@ -335,16 +296,13 @@ export async function updateOt(codigoOriginal: string, nuevoCodigo: string, clie
   const all = await getOTs();
   const idx = all.findIndex((o) => o.codigo === codigoOriginal);
   if (idx < 0) throw new Error(`OT ${codigoOriginal} no encontrada`);
-  if (nuevoCodigo !== codigoOriginal && all.some(o => o.codigo === nuevoCodigo)) {
-    throw new Error(`Ya existe una OT con código ${nuevoCodigo}`);
-  }
+  if (nuevoCodigo !== codigoOriginal && all.some(o => o.codigo === nuevoCodigo)) throw new Error(`Ya existe una OT con código ${nuevoCodigo}`);
   const rowNumber = idx + 2;
   const estadoUpper = estado.toUpperCase();
   const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
   const visibleActual = all[idx].visible_mapa !== false ? "TRUE" : "FALSE";
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `OTs!A${rowNumber}:F${rowNumber}`,
+    spreadsheetId: getSheetId(), range: `OTs!A${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[nuevoCodigo, cliente, sede, estadoUpper, activo, visibleActual]] },
   });
@@ -359,10 +317,8 @@ export async function deleteOt(codigo: string): Promise<{ ok: true }> {
   const rows = filtered.map((o) => [o.codigo, o.cliente, o.sede, o.estado, o.activo ? "TRUE" : "FALSE", o.visible_mapa ? "TRUE" : "FALSE"]);
   await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "OTs!A1:Z" });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: "OTs!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [...header, ...rows] },
+    spreadsheetId: getSheetId(), range: "OTs!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
   });
   return { ok: true };
 }
@@ -375,55 +331,38 @@ export async function updateOtVisible(codigo: string, visible: boolean): Promise
   const rowNumber = idx + 2;
   const value = visible ? "TRUE" : "FALSE";
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `OTs!F${rowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[value]] },
+    spreadsheetId: getSheetId(), range: `OTs!F${rowNumber}`,
+    valueInputOption: "USER_ENTERED", requestBody: { values: [[value]] },
   });
   return { ok: true };
 }
 
 // ============================================================
-// LECTURA/ESCRITURA — SEDES
+// SEDES
 // ============================================================
 export async function getSedes(): Promise<Sede[]> {
   try {
     const sheets = getClient();
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSheetId(),
-      range: "Sedes!A2:H",
-    });
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Sedes!A2:H" });
     const rows = (res.data.values ?? []) as string[][];
     return rows
       .filter((r) => r.length > 0 && r.some((c) => c && c.trim() !== ""))
       .map((r) => ({
-        nombre: r[0] ?? "",
-        lat: parseFloat(r[1]) || 0,
-        lng: parseFloat(r[2]) || 0,
-        region: r[3] ?? "",
-        ciudad: r[4] ?? "",
-        datoCurioso: r[5] ?? "",
-        foto_ciudad: r[6] ?? "",
-        visible: (r[7] ?? "TRUE").toUpperCase() === "TRUE",
+        nombre: r[0] ?? "", lat: parseFloat(r[1]) || 0, lng: parseFloat(r[2]) || 0,
+        region: r[3] ?? "", ciudad: r[4] ?? "", datoCurioso: r[5] ?? "",
+        foto_ciudad: r[6] ?? "", visible: (r[7] ?? "TRUE").toUpperCase() === "TRUE",
       }));
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 export async function addSede(sede: { nombre: string; lat: number; lng: number; region: string; ciudad: string; datoCurioso: string; foto_ciudad: string; }): Promise<{ ok: true }> {
   const sheets = getClient();
   const all = await getSedes();
-  if (all.some((s) => s.nombre.toUpperCase() === sede.nombre.toUpperCase())) {
-    throw new Error(`Ya existe una sede con nombre ${sede.nombre}`);
-  }
+  if (all.some((s) => s.nombre.toUpperCase() === sede.nombre.toUpperCase())) throw new Error(`Ya existe una sede con nombre ${sede.nombre}`);
   const values = [[sede.nombre, sede.lat, sede.lng, sede.region, sede.ciudad, sede.datoCurioso, sede.foto_ciudad, "TRUE"]];
   await sheets.spreadsheets.values.append({
-    spreadsheetId: getSheetId(),
-    range: "Sedes!A:H",
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values },
+    spreadsheetId: getSheetId(), range: "Sedes!A:H",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
   });
   return { ok: true };
 }
@@ -435,8 +374,7 @@ export async function updateSede(nombreOriginal: string, newData: { nombre: stri
   if (idx < 0) throw new Error(`Sede ${nombreOriginal} no encontrada`);
   const rowNumber = idx + 2;
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `Sedes!A${rowNumber}:G${rowNumber}`,
+    spreadsheetId: getSheetId(), range: `Sedes!A${rowNumber}:G${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[newData.nombre, newData.lat, newData.lng, newData.region, newData.ciudad, newData.datoCurioso, newData.foto_ciudad]] },
   });
@@ -451,10 +389,8 @@ export async function toggleSedeVisible(nombre: string, visible: boolean): Promi
   const rowNumber = idx + 2;
   const value = visible ? "TRUE" : "FALSE";
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `Sedes!H${rowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[value]] },
+    spreadsheetId: getSheetId(), range: `Sedes!H${rowNumber}`,
+    valueInputOption: "USER_ENTERED", requestBody: { values: [[value]] },
   });
   return { ok: true };
 }
@@ -467,10 +403,8 @@ export async function deleteSede(nombre: string): Promise<{ ok: true }> {
   const rows = filtered.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad, s.visible ? "TRUE" : "FALSE"]);
   await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Sedes!A1:Z" });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: "Sedes!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [...header, ...rows] },
+    spreadsheetId: getSheetId(), range: "Sedes!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
   });
   return { ok: true };
 }
@@ -481,16 +415,14 @@ export async function replaceAllSedes(sedes: Sede[]): Promise<{ ok: true }> {
   const rows = sedes.map((s) => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad, s.visible ? "TRUE" : "FALSE"]);
   await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Sedes!A1:Z" });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: "Sedes!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [...header, ...rows] },
+    spreadsheetId: getSheetId(), range: "Sedes!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
   });
   return { ok: true };
 }
 
 // ============================================================
-// REGENERAR CRONOGRAMA_VISUAL
+// CRONOGRAMA_VISUAL
 // ============================================================
 export async function regenerarCronogramaVisual(year: number, month?: number): Promise<{ ok: true; filas: number; columnas: number }> {
   const sheets = getClient();
@@ -557,10 +489,8 @@ export async function regenerarCronogramaVisual(year: number, month?: number): P
   await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Cronograma_Visual!A1:ZZ" });
   const lastCol = colToLetter(totalColumnas);
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `Cronograma_Visual!A1:${lastCol}${rows.length}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: rows },
+    spreadsheetId: getSheetId(), range: `Cronograma_Visual!A1:${lastCol}${rows.length}`,
+    valueInputOption: "USER_ENTERED", requestBody: { values: rows },
   });
   return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
@@ -576,79 +506,51 @@ function colToLetter(col: number): string {
 }
 
 // ============================================================
-// HABILITACIONES — CRUD
-// ============================================================
-// Estructura de la hoja "Habilitaciones" (plana):
-//   A: id                  (H0001, SD0001 para sub-docs)
-//   B: tecnico_id
-//   C: tecnico_nombre      (cache para mostrar en Excel sin join)
-//   D: ot_codigo
-//   E: sede_nombre
-//   F: documento_nombre    (o nombre del sub-doc si es_subdoc=TRUE)
-//   G: fecha_vencimiento   (vacío si tiene sub_documentos)
-//   H: enlace_url
-//   I: notas
-//   J: parent_id           (vacío si es documento padre; "Hxxxx" si es sub-doc)
-//   K: es_subdoc           ("TRUE" / "FALSE")
-//   L: contabilizar        ("TRUE" / "FALSE") — si es FALSE no afecta conteos generales
+// HABILITACIONES - CRUD
+// Estructura hoja "Habilitaciones":
+//   A: id  B: tecnico_id  C: tecnico_nombre  D: ot_codigo  E: sede_nombre
+//   F: documento_nombre  G: fecha_vencimiento  H: enlace_url  I: notas
+//   J: parent_id  K: es_subdoc  L: contabilizar
 // ============================================================
 
-/** Helper: obtener nombre del técnico para guardar en cache */
 async function getTecnicoNombre(tecnicoId: string): Promise<string> {
   try {
     const all = await getTecnicos();
     const t = all.find(x => x.id === tecnicoId);
     return t?.nombre || "";
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
 
 export async function getHabilitaciones(): Promise<Habilitacion[]> {
   try {
     const sheets = getClient();
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSheetId(),
-      range: "Habilitaciones!A2:L",
-    });
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Habilitaciones!A2:L" });
     const rows = (res.data.values ?? []) as string[][];
     const validRows = rows.filter((r) => r.length > 0 && r.some((c) => c && c.trim() !== ""));
-
     const padres: Habilitacion[] = [];
     const subDocs: Array<SubDocumento & { _parent_id: string }> = [];
-
     for (const r of validRows) {
       const id = r[0] ?? "";
       const esSubdoc = (r[10] ?? "FALSE").toUpperCase() === "TRUE";
       if (esSubdoc) {
         const sub: SubDocumento & { _parent_id: string } = {
-          id,
-          nombre: r[5] ?? "",
-          fecha_vencimiento: r[6] ?? "",
-          enlace_url: r[7] || undefined,
-          notas: r[8] || undefined,
+          id, nombre: r[5] ?? "", fecha_vencimiento: r[6] ?? "",
+          enlace_url: r[7] || undefined, notas: r[8] || undefined,
           contabilizar: (r[11] ?? "TRUE").toUpperCase() === "TRUE",
           _parent_id: r[9] ?? "",
         };
         subDocs.push(sub);
       } else {
         padres.push({
-          id,
-          tecnico_id: r[1] ?? "",
-          tecnico_nombre: r[2] ?? "",
-          ot_codigo: r[3] ?? "",
-          sede_nombre: r[4] ?? "",
-          documento_nombre: r[5] ?? "",
-          fecha_vencimiento: r[6] || undefined,
-          enlace_url: r[7] || undefined,
-          notas: r[8] || undefined,
+          id, tecnico_id: r[1] ?? "", tecnico_nombre: r[2] ?? "",
+          ot_codigo: r[3] || undefined, sede_nombre: r[4] ?? "",
+          documento_nombre: r[5] ?? "", fecha_vencimiento: r[6] || undefined,
+          enlace_url: r[7] || undefined, notas: r[8] || undefined,
           contabilizar: (r[11] ?? "TRUE").toUpperCase() === "TRUE",
           sub_documentos: [],
         });
       }
     }
-
-    // Asociar sub-docs a sus padres
     for (const sub of subDocs) {
       const padre = padres.find((p) => p.id === sub._parent_id);
       if (padre) {
@@ -657,19 +559,13 @@ export async function getHabilitaciones(): Promise<Habilitacion[]> {
         padre.sub_documentos.push(subClean);
       }
     }
-
     return padres;
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 async function getNextHabilitacionId(): Promise<string> {
   const sheets = getClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A2:A",
-  });
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Habilitaciones!A2:A" });
   const rows = (res.data.values ?? []) as string[][];
   let maxH = 0;
   let maxSD = 0;
@@ -685,10 +581,7 @@ async function getNextHabilitacionId(): Promise<string> {
 
 async function getNextSubDocId(): Promise<string> {
   const sheets = getClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A2:A",
-  });
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Habilitaciones!A2:A" });
   const rows = (res.data.values ?? []) as string[][];
   let maxSD = 0;
   for (const r of rows) {
@@ -704,111 +597,59 @@ export async function addHabilitacion(h: Omit<Habilitacion, "id">): Promise<{ ok
   const newId = await getNextHabilitacionId();
   const tecnicoNombre = h.tecnico_nombre || await getTecnicoNombre(h.tecnico_id);
   const contabilizarStr = h.contabilizar === false ? "FALSE" : "TRUE";
-
   const values = [[
-    newId,
-    h.tecnico_id,
-    tecnicoNombre,
-    h.ot_codigo,
-    h.sede_nombre,
-    h.documento_nombre,
-    h.fecha_vencimiento || "",
-    h.enlace_url || "",
-    h.notas || "",
-    "",   // parent_id vacío para padre
-    "FALSE",
-    contabilizarStr,
+    newId, h.tecnico_id, tecnicoNombre, h.ot_codigo || "", h.sede_nombre,
+    h.documento_nombre, h.fecha_vencimiento || "", h.enlace_url || "", h.notas || "",
+    "", "FALSE", contabilizarStr,
   ]];
   await sheets.spreadsheets.values.append({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A:L",
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values },
+    spreadsheetId: getSheetId(), range: "Habilitaciones!A:L",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
   });
-
   if (h.sub_documentos && h.sub_documentos.length > 0) {
     const subValues: string[][] = [];
     for (const sub of h.sub_documentos) {
       const subId = await getNextSubDocId();
       const subContab = sub.contabilizar === false ? "FALSE" : "TRUE";
       subValues.push([
-        subId,
-        h.tecnico_id,
-        tecnicoNombre,
-        h.ot_codigo,
-        h.sede_nombre,
-        sub.nombre,
-        sub.fecha_vencimiento,
-        sub.enlace_url || "",
-        sub.notas || "",
-        newId,
-        "TRUE",
-        subContab,
+        subId, h.tecnico_id, tecnicoNombre, h.ot_codigo || "", h.sede_nombre,
+        sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "",
+        newId, "TRUE", subContab,
       ]);
     }
     await sheets.spreadsheets.values.append({
-      spreadsheetId: getSheetId(),
-      range: "Habilitaciones!A:L",
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: subValues },
+      spreadsheetId: getSheetId(), range: "Habilitaciones!A:L",
+      valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: subValues },
     });
   }
-
   return { ok: true, id: newId };
 }
 
-export async function updateHabilitacion(
-  habilitacionId: string,
-  newData: Partial<Habilitacion>
-): Promise<{ ok: true }> {
+export async function updateHabilitacion(habilitacionId: string, newData: Partial<Habilitacion>): Promise<{ ok: true }> {
   const sheets = getClient();
   const all = await getHabilitaciones();
   const idx = all.findIndex((h) => h.id === habilitacionId);
   if (idx < 0) throw new Error(`Habilitación ${habilitacionId} no encontrada`);
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A2:A",
-  });
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Habilitaciones!A2:A" });
   const rows = (res.data.values ?? []) as string[][];
   let rowNumber = -1;
   for (let i = 0; i < rows.length; i++) {
-    if (rows[i][0] === habilitacionId) {
-      rowNumber = i + 2;
-      break;
-    }
+    if (rows[i][0] === habilitacionId) { rowNumber = i + 2; break; }
   }
   if (rowNumber < 0) throw new Error(`Fila no encontrada para ${habilitacionId}`);
-
   const existing = all[idx];
   const updated: Habilitacion = { ...existing, ...newData, id: habilitacionId };
   const tecnicoNombre = updated.tecnico_nombre || await getTecnicoNombre(updated.tecnico_id);
   const contabilizarStr = updated.contabilizar === false ? "FALSE" : "TRUE";
-
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `Habilitaciones!A${rowNumber}:L${rowNumber}`,
+    spreadsheetId: getSheetId(), range: `Habilitaciones!A${rowNumber}:L${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [[
-        habilitacionId,
-        updated.tecnico_id,
-        tecnicoNombre,
-        updated.ot_codigo,
-        updated.sede_nombre,
-        updated.documento_nombre,
-        updated.fecha_vencimiento || "",
-        updated.enlace_url || "",
-        updated.notas || "",
-        "",
-        "FALSE",
-        contabilizarStr,
-      ]],
-    },
+    requestBody: { values: [[
+      habilitacionId, updated.tecnico_id, tecnicoNombre, updated.ot_codigo || "", updated.sede_nombre,
+      updated.documento_nombre, updated.fecha_vencimiento || "", updated.enlace_url || "", updated.notas || "",
+      "", "FALSE", contabilizarStr,
+    ]] },
   });
-
   return { ok: true };
 }
 
@@ -816,256 +657,375 @@ export async function deleteHabilitacion(habilitacionId: string): Promise<{ ok: 
   const sheets = getClient();
   const all = await getHabilitaciones();
   const filtered = all.filter((h) => h.id !== habilitacionId);
-
   const header = [["id", "tecnico_id", "tecnico_nombre", "ot_codigo", "sede_nombre", "documento_nombre", "fecha_vencimiento", "enlace_url", "notas", "parent_id", "es_subdoc", "contabilizar"]];
   const rows: string[][] = [];
-
   for (const h of filtered) {
     rows.push([
-      h.id,
-      h.tecnico_id,
-      h.tecnico_nombre || "",
-      h.ot_codigo,
-      h.sede_nombre,
-      h.documento_nombre,
-      h.fecha_vencimiento || "",
-      h.enlace_url || "",
-      h.notas || "",
-      "",
-      "FALSE",
-      h.contabilizar === false ? "FALSE" : "TRUE",
+      h.id, h.tecnico_id, h.tecnico_nombre || "", h.ot_codigo || "", h.sede_nombre,
+      h.documento_nombre, h.fecha_vencimiento || "", h.enlace_url || "", h.notas || "",
+      "", "FALSE", h.contabilizar === false ? "FALSE" : "TRUE",
     ]);
     if (h.sub_documentos) {
       for (const sub of h.sub_documentos) {
         rows.push([
-          sub.id,
-          h.tecnico_id,
-          h.tecnico_nombre || "",
-          h.ot_codigo,
-          h.sede_nombre,
-          sub.nombre,
-          sub.fecha_vencimiento,
-          sub.enlace_url || "",
-          sub.notas || "",
-          h.id,
-          "TRUE",
-          sub.contabilizar === false ? "FALSE" : "TRUE",
+          sub.id, h.tecnico_id, h.tecnico_nombre || "", h.ot_codigo || "", h.sede_nombre,
+          sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "",
+          h.id, "TRUE", sub.contabilizar === false ? "FALSE" : "TRUE",
         ]);
       }
     }
   }
-
   await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Habilitaciones!A1:Z" });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [...header, ...rows] },
+    spreadsheetId: getSheetId(), range: "Habilitaciones!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
   });
-
   return { ok: true };
 }
 
-export async function addSubDocumento(
-  habilitacionId: string,
-  sub: Omit<SubDocumento, "id">
-): Promise<{ ok: true; id: string }> {
+export async function addSubDocumento(habilitacionId: string, sub: Omit<SubDocumento, "id">): Promise<{ ok: true; id: string }> {
   const sheets = getClient();
   const all = await getHabilitaciones();
   const padre = all.find((h) => h.id === habilitacionId);
   if (!padre) throw new Error(`Habilitación ${habilitacionId} no encontrada`);
-
   const newId = await getNextSubDocId();
   const tecnicoNombre = padre.tecnico_nombre || await getTecnicoNombre(padre.tecnico_id);
   const subContab = sub.contabilizar === false ? "FALSE" : "TRUE";
-
   const values = [[
-    newId,
-    padre.tecnico_id,
-    tecnicoNombre,
-    padre.ot_codigo,
-    padre.sede_nombre,
-    sub.nombre,
-    sub.fecha_vencimiento,
-    sub.enlace_url || "",
-    sub.notas || "",
-    habilitacionId,
-    "TRUE",
-    subContab,
+    newId, padre.tecnico_id, tecnicoNombre, padre.ot_codigo || "", padre.sede_nombre,
+    sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "",
+    habilitacionId, "TRUE", subContab,
   ]];
   await sheets.spreadsheets.values.append({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A:L",
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values },
+    spreadsheetId: getSheetId(), range: "Habilitaciones!A:L",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
   });
   return { ok: true, id: newId };
 }
 
-export async function updateSubDocumento(
-  subDocId: string,
-  newData: Partial<SubDocumento>
-): Promise<{ ok: true }> {
+export async function updateSubDocumento(subDocId: string, newData: Partial<SubDocumento>): Promise<{ ok: true }> {
   const sheets = getClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A2:A",
-  });
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Habilitaciones!A2:A" });
   const rows = (res.data.values ?? []) as string[][];
   let rowNumber = -1;
   for (let i = 0; i < rows.length; i++) {
-    if (rows[i][0] === subDocId) {
-      rowNumber = i + 2;
-      break;
-    }
+    if (rows[i][0] === subDocId) { rowNumber = i + 2; break; }
   }
   if (rowNumber < 0) throw new Error(`Fila no encontrada para sub-doc ${subDocId}`);
-
-  // Leer fila actual
-  const rowRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSheetId(),
-    range: `Habilitaciones!A${rowNumber}:L${rowNumber}`,
-  });
+  const rowRes = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: `Habilitaciones!A${rowNumber}:L${rowNumber}` });
   const currentRow = (rowRes.data.values ?? [[]])[0] as string[];
   const current = currentRow.length >= 12 ? currentRow : [...currentRow, ...Array(12 - currentRow.length).fill("")];
-
-  // Actualizar: F (nombre), G (fecha), H (enlace), I (notas), L (contabilizar)
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: `Habilitaciones!F${rowNumber}:I${rowNumber}`,
+    spreadsheetId: getSheetId(), range: `Habilitaciones!F${rowNumber}:I${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [[
-        newData.nombre ?? current[5],
-        newData.fecha_vencimiento ?? current[6],
-        newData.enlace_url ?? current[7],
-        newData.notas ?? current[8],
-      ]],
-    },
+    requestBody: { values: [[
+      newData.nombre ?? current[5], newData.fecha_vencimiento ?? current[6],
+      newData.enlace_url ?? current[7], newData.notas ?? current[8],
+    ]] },
   });
-
-  // Contabilizar (columna L)
   if (newData.contabilizar !== undefined) {
     await sheets.spreadsheets.values.update({
-      spreadsheetId: getSheetId(),
-      range: `Habilitaciones!L${rowNumber}`,
-      valueInputOption: "USER_ENTERED",
-      requestBody: { values: [[newData.contabilizar ? "TRUE" : "FALSE"]] },
+      spreadsheetId: getSheetId(), range: `Habilitaciones!L${rowNumber}`,
+      valueInputOption: "USER_ENTERED", requestBody: { values: [[newData.contabilizar ? "TRUE" : "FALSE"]] },
     });
   }
-
   return { ok: true };
 }
 
 export async function deleteSubDocumento(subDocId: string): Promise<{ ok: true }> {
   const sheets = getClient();
   const all = await getHabilitaciones();
-
   const header = [["id", "tecnico_id", "tecnico_nombre", "ot_codigo", "sede_nombre", "documento_nombre", "fecha_vencimiento", "enlace_url", "notas", "parent_id", "es_subdoc", "contabilizar"]];
   const rows: string[][] = [];
-
   for (const h of all) {
     rows.push([
-      h.id,
-      h.tecnico_id,
-      h.tecnico_nombre || "",
-      h.ot_codigo,
-      h.sede_nombre,
-      h.documento_nombre,
-      h.fecha_vencimiento || "",
-      h.enlace_url || "",
-      h.notas || "",
-      "",
-      "FALSE",
-      h.contabilizar === false ? "FALSE" : "TRUE",
+      h.id, h.tecnico_id, h.tecnico_nombre || "", h.ot_codigo || "", h.sede_nombre,
+      h.documento_nombre, h.fecha_vencimiento || "", h.enlace_url || "", h.notas || "",
+      "", "FALSE", h.contabilizar === false ? "FALSE" : "TRUE",
     ]);
     if (h.sub_documentos) {
       for (const sub of h.sub_documentos) {
         if (sub.id === subDocId) continue;
         rows.push([
-          sub.id,
-          h.tecnico_id,
-          h.tecnico_nombre || "",
-          h.ot_codigo,
-          h.sede_nombre,
-          sub.nombre,
-          sub.fecha_vencimiento,
-          sub.enlace_url || "",
-          sub.notas || "",
-          h.id,
-          "TRUE",
-          sub.contabilizar === false ? "FALSE" : "TRUE",
+          sub.id, h.tecnico_id, h.tecnico_nombre || "", h.ot_codigo || "", h.sede_nombre,
+          sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "",
+          h.id, "TRUE", sub.contabilizar === false ? "FALSE" : "TRUE",
         ]);
       }
     }
   }
-
   await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Habilitaciones!A1:Z" });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [...header, ...rows] },
+    spreadsheetId: getSheetId(), range: "Habilitaciones!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
   });
-
   return { ok: true };
 }
 
-/** Reemplaza TODA la hoja Habilitaciones */
 export async function replaceAllHabilitaciones(habilitaciones: Habilitacion[]): Promise<{ ok: true }> {
   const sheets = getClient();
   const header = [["id", "tecnico_id", "tecnico_nombre", "ot_codigo", "sede_nombre", "documento_nombre", "fecha_vencimiento", "enlace_url", "notas", "parent_id", "es_subdoc", "contabilizar"]];
   const rows: string[][] = [];
-
-  // Obtener todos los técnicos para resolver nombres
   const tecnicos = await getTecnicos();
   const tecMap: Record<string, string> = {};
   tecnicos.forEach(t => { tecMap[t.id] = t.nombre; });
-
   for (const h of habilitaciones) {
     const tecnicoNombre = h.tecnico_nombre || tecMap[h.tecnico_id] || "";
     rows.push([
-      h.id,
-      h.tecnico_id,
-      tecnicoNombre,
-      h.ot_codigo,
-      h.sede_nombre,
-      h.documento_nombre,
-      h.fecha_vencimiento || "",
-      h.enlace_url || "",
-      h.notas || "",
-      "",
-      "FALSE",
-      h.contabilizar === false ? "FALSE" : "TRUE",
+      h.id, h.tecnico_id, tecnicoNombre, h.ot_codigo || "", h.sede_nombre,
+      h.documento_nombre, h.fecha_vencimiento || "", h.enlace_url || "", h.notas || "",
+      "", "FALSE", h.contabilizar === false ? "FALSE" : "TRUE",
     ]);
     if (h.sub_documentos) {
       for (const sub of h.sub_documentos) {
         rows.push([
-          sub.id,
-          h.tecnico_id,
-          tecnicoNombre,
-          h.ot_codigo,
-          h.sede_nombre,
-          sub.nombre,
-          sub.fecha_vencimiento,
-          sub.enlace_url || "",
-          sub.notas || "",
-          h.id,
-          "TRUE",
-          sub.contabilizar === false ? "FALSE" : "TRUE",
+          sub.id, h.tecnico_id, tecnicoNombre, h.ot_codigo || "", h.sede_nombre,
+          sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "",
+          h.id, "TRUE", sub.contabilizar === false ? "FALSE" : "TRUE",
         ]);
       }
     }
   }
-
   await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Habilitaciones!A1:Z" });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSheetId(),
-    range: "Habilitaciones!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [...header, ...rows] },
+    spreadsheetId: getSheetId(), range: "Habilitaciones!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
   });
+  return { ok: true };
+}
 
+// ============================================================
+// PRESETS DE SEDES (plantillas) - CRUD
+// Hoja "Presets_Sedes":
+//   A: id            (PS0001 para sede, PD0001 para documento, PDS0001 para sub-doc)
+//   B: tipo          ("SEDE" | "DOC" | "SUBDOC")
+//   C: sede_nombre
+//   D: parent_id     (vacío para sede, "PSxxxx" para doc, "PDxxxx" para sub-doc)
+//   E: nombre        (nombre del doc o sub-doc)
+//   F: fecha_vencimiento
+//   G: enlace_url
+//   H: notas
+//   I: contabilizar
+// ============================================================
+
+export async function getPresetsSedes(): Promise<PresetSede[]> {
+  try {
+    const sheets = getClient();
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Presets_Sedes!A2:I" });
+    const rows = (res.data.values ?? []) as string[][];
+    const validRows = rows.filter((r) => r.length > 0 && r.some((c) => c && c.trim() !== ""));
+
+    const presetsSede: PresetSede[] = [];
+    const docsByParent: Record<string, PresetDocumento[]> = {};
+    const subDocsByParent: Record<string, SubDocumento[]> = {};
+
+    for (const r of validRows) {
+      const id = r[0] ?? "";
+      const tipo = (r[1] ?? "").toUpperCase();
+      const sede_nombre = r[2] ?? "";
+      const parent_id = r[3] ?? "";
+      const nombre = r[4] ?? "";
+      const fecha = r[5] ?? "";
+      const enlace = r[6] ?? "";
+      const notas = r[7] ?? "";
+      const contab = (r[8] ?? "TRUE").toUpperCase() === "TRUE";
+
+      if (tipo === "SEDE") {
+        presetsSede.push({ id, sede_nombre, documentos: [] });
+      } else if (tipo === "DOC") {
+        const doc: PresetDocumento = {
+          id, nombre, fecha_vencimiento: fecha || undefined,
+          enlace_url: enlace || undefined, notas: notas || undefined,
+          sub_documentos: [],
+        };
+        if (!docsByParent[parent_id]) docsByParent[parent_id] = [];
+        docsByParent[parent_id].push(doc);
+      } else if (tipo === "SUBDOC") {
+        const sub: SubDocumento = {
+          id, nombre, fecha_vencimiento: fecha,
+          enlace_url: enlace || undefined, notas: notas || undefined,
+          contabilizar: contab,
+        };
+        if (!subDocsByParent[parent_id]) subDocsByParent[parent_id] = [];
+        subDocsByParent[parent_id].push(sub);
+      }
+    }
+
+    // Asociar sub-docs a docs y docs a sedes
+    for (const preset of presetsSede) {
+      const docs = docsByParent[preset.id] || [];
+      for (const doc of docs) {
+        doc.sub_documentos = subDocsByParent[doc.id] || [];
+      }
+      preset.documentos = docs;
+    }
+
+    return presetsSede;
+  } catch { return []; }
+}
+
+async function getNextPresetId(prefix: "PS" | "PD" | "PDS"): Promise<string> {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "Presets_Sedes!A2:A" });
+  const rows = (res.data.values ?? []) as string[][];
+  let max = 0;
+  for (const r of rows) {
+    const id = r[0] ?? "";
+    const m = id.match(new RegExp(`^${prefix}(\\d+)$`));
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}${String(max + 1).padStart(4, "0")}`;
+}
+
+export async function addPresetSede(sede_nombre: string): Promise<{ ok: true; id: string }> {
+  const sheets = getClient();
+  const newId = await getNextPresetId("PS");
+  const values = [[newId, "SEDE", sede_nombre, "", "", "", "", "", "TRUE"]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(), range: "Presets_Sedes!A:I",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
+  });
+  return { ok: true, id: newId };
+}
+
+export async function deletePresetSede(presetSedeId: string): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getPresetsSedes();
+  const filtered = all.filter((p) => p.id !== presetSedeId);
+  const header = [["id", "tipo", "sede_nombre", "parent_id", "nombre", "fecha_vencimiento", "enlace_url", "notas", "contabilizar"]];
+  const rows: string[][] = [];
+  for (const p of filtered) {
+    rows.push([p.id, "SEDE", p.sede_nombre, "", "", "", "", "", "TRUE"]);
+    for (const doc of p.documentos) {
+      rows.push([doc.id, "DOC", p.sede_nombre, p.id, doc.nombre, doc.fecha_vencimiento || "", doc.enlace_url || "", doc.notas || "", "TRUE"]);
+      if (doc.sub_documentos) {
+        for (const sub of doc.sub_documentos) {
+          rows.push([sub.id, "SUBDOC", p.sede_nombre, doc.id, sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "", sub.contabilizar === false ? "FALSE" : "TRUE"]);
+        }
+      }
+    }
+  }
+  await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Presets_Sedes!A1:Z" });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(), range: "Presets_Sedes!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
+  });
+  return { ok: true };
+}
+
+export async function addPresetDocumento(presetSedeId: string, doc: Omit<PresetDocumento, "id">): Promise<{ ok: true; id: string }> {
+  const sheets = getClient();
+  const all = await getPresetsSedes();
+  const preset = all.find(p => p.id === presetSedeId);
+  if (!preset) throw new Error(`Preset ${presetSedeId} no encontrado`);
+  const newId = await getNextPresetId("PD");
+  const values = [[newId, "DOC", preset.sede_nombre, presetSedeId, doc.nombre, doc.fecha_vencimiento || "", doc.enlace_url || "", doc.notas || "", "TRUE"]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(), range: "Presets_Sedes!A:I",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
+  });
+  if (doc.sub_documentos && doc.sub_documentos.length > 0) {
+    const subValues: string[][] = [];
+    for (const sub of doc.sub_documentos) {
+      const subId = await getNextPresetId("PDS");
+      subValues.push([subId, "SUBDOC", preset.sede_nombre, newId, sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "", sub.contabilizar === false ? "FALSE" : "TRUE"]);
+    }
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: getSheetId(), range: "Presets_Sedes!A:I",
+      valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: subValues },
+    });
+  }
+  return { ok: true, id: newId };
+}
+
+export async function deletePresetDocumento(presetDocId: string): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getPresetsSedes();
+  const header = [["id", "tipo", "sede_nombre", "parent_id", "nombre", "fecha_vencimiento", "enlace_url", "notas", "contabilizar"]];
+  const rows: string[][] = [];
+  for (const p of all) {
+    rows.push([p.id, "SEDE", p.sede_nombre, "", "", "", "", "", "TRUE"]);
+    for (const doc of p.documentos) {
+      if (doc.id === presetDocId) continue;
+      rows.push([doc.id, "DOC", p.sede_nombre, p.id, doc.nombre, doc.fecha_vencimiento || "", doc.enlace_url || "", doc.notas || "", "TRUE"]);
+      if (doc.sub_documentos) {
+        for (const sub of doc.sub_documentos) {
+          rows.push([sub.id, "SUBDOC", p.sede_nombre, doc.id, sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "", sub.contabilizar === false ? "FALSE" : "TRUE"]);
+        }
+      }
+    }
+  }
+  await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Presets_Sedes!A1:Z" });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(), range: "Presets_Sedes!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
+  });
+  return { ok: true };
+}
+
+export async function addPresetSubDoc(presetDocId: string, sub: Omit<SubDocumento, "id">): Promise<{ ok: true; id: string }> {
+  const sheets = getClient();
+  const all = await getPresetsSedes();
+  let presetSedeNombre = "";
+  for (const p of all) {
+    const doc = p.documentos.find(d => d.id === presetDocId);
+    if (doc) { presetSedeNombre = p.sede_nombre; break; }
+  }
+  if (!presetSedeNombre) throw new Error(`Documento ${presetDocId} no encontrado en presets`);
+  const newId = await getNextPresetId("PDS");
+  const values = [[newId, "SUBDOC", presetSedeNombre, presetDocId, sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "", sub.contabilizar === false ? "FALSE" : "TRUE"]];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(), range: "Presets_Sedes!A:I",
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
+  });
+  return { ok: true, id: newId };
+}
+
+export async function deletePresetSubDoc(presetSubDocId: string): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const all = await getPresetsSedes();
+  const header = [["id", "tipo", "sede_nombre", "parent_id", "nombre", "fecha_vencimiento", "enlace_url", "notas", "contabilizar"]];
+  const rows: string[][] = [];
+  for (const p of all) {
+    rows.push([p.id, "SEDE", p.sede_nombre, "", "", "", "", "", "TRUE"]);
+    for (const doc of p.documentos) {
+      rows.push([doc.id, "DOC", p.sede_nombre, p.id, doc.nombre, doc.fecha_vencimiento || "", doc.enlace_url || "", doc.notas || "", "TRUE"]);
+      if (doc.sub_documentos) {
+        for (const sub of doc.sub_documentos) {
+          if (sub.id === presetSubDocId) continue;
+          rows.push([sub.id, "SUBDOC", p.sede_nombre, doc.id, sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "", sub.contabilizar === false ? "FALSE" : "TRUE"]);
+        }
+      }
+    }
+  }
+  await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Presets_Sedes!A1:Z" });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(), range: "Presets_Sedes!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
+  });
+  return { ok: true };
+}
+
+/** Reemplaza TODA la hoja Presets_Sedes */
+export async function replaceAllPresetsSedes(presets: PresetSede[]): Promise<{ ok: true }> {
+  const sheets = getClient();
+  const header = [["id", "tipo", "sede_nombre", "parent_id", "nombre", "fecha_vencimiento", "enlace_url", "notas", "contabilizar"]];
+  const rows: string[][] = [];
+  for (const p of presets) {
+    rows.push([p.id, "SEDE", p.sede_nombre, "", "", "", "", "", "TRUE"]);
+    for (const doc of p.documentos) {
+      rows.push([doc.id, "DOC", p.sede_nombre, p.id, doc.nombre, doc.fecha_vencimiento || "", doc.enlace_url || "", doc.notas || "", "TRUE"]);
+      if (doc.sub_documentos) {
+        for (const sub of doc.sub_documentos) {
+          rows.push([sub.id, "SUBDOC", p.sede_nombre, doc.id, sub.nombre, sub.fecha_vencimiento, sub.enlace_url || "", sub.notas || "", sub.contabilizar === false ? "FALSE" : "TRUE"]);
+        }
+      }
+    }
+  }
+  await sheets.spreadsheets.values.clear({ spreadsheetId: getSheetId(), range: "Presets_Sedes!A1:Z" });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSheetId(), range: "Presets_Sedes!A1",
+    valueInputOption: "USER_ENTERED", requestBody: { values: [...header, ...rows] },
+  });
   return { ok: true };
 }
