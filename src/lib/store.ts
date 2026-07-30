@@ -15,6 +15,8 @@ import type {
   Habilitacion,
   SubDocumento,
   Sede,
+  PresetSede,
+  PresetDocumento,
 } from "@/lib/types";
 
 export interface CronogramaMap {
@@ -38,7 +40,8 @@ interface AppState {
   actividades: Actividad[];
   cronograma: CronogramaMap;
   habilitaciones: Habilitacion[];
-  sedes: Sede[];              // ← NUEVO: fuente única de sedes para mapa y admin
+  presets: PresetSede[];
+  sedes: Sede[];
   modoAcceso: ModoAcceso;
   cargando: boolean;
   actualizando: boolean;
@@ -144,12 +147,23 @@ interface AppState {
   reactivarTecnico: (id: string) => Promise<boolean>;
   sincronizarTecnicosExcel: () => Promise<boolean>;
 
-  // ===== Sedes CRUD (desde el store, para sincronizar Admin ↔ Mapa) =====
+  // ===== Sedes CRUD =====
   agregarSede: (s: { nombre: string; lat: number; lng: number; region: string; ciudad: string; datoCurioso: string; foto_ciudad: string }) => Promise<boolean>;
   actualizarSede: (nombreOriginal: string, newData: { nombre: string; lat: number; lng: number; region: string; ciudad: string; datoCurioso: string; foto_ciudad: string }) => Promise<boolean>;
   eliminarSede: (nombre: string) => Promise<boolean>;
   toggleSedeVisible: (nombre: string, visible: boolean) => Promise<boolean>;
   sincronizarSedesExcel: () => Promise<boolean>;
+
+  // ===== Presets de Sedes =====
+  cargarPresets: () => Promise<void>;
+  agregarPresetSede: (sedeNombre: string) => Promise<boolean>;
+  eliminarPresetSede: (id: string) => Promise<boolean>;
+  agregarPresetDocumento: (presetSedeId: string, doc: Omit<PresetDocumento, "id">) => Promise<boolean>;
+  eliminarPresetDocumento: (id: string) => Promise<boolean>;
+  agregarPresetSubDoc: (presetDocId: string, sub: Omit<SubDocumento, "id">) => Promise<boolean>;
+  eliminarPresetSubDoc: (id: string) => Promise<boolean>;
+  aplicarPresetATecnico: (presetSedeId: string, tecnicoId: string, copiarFechas: boolean) => Promise<boolean>;
+  sincronizarPresetsExcel: () => Promise<boolean>;
 }
 
 export function formatFechaISO(d: Date): string {
@@ -168,7 +182,8 @@ export const useStore = create<AppState>((set, get) => ({
   actividades: [],
   cronograma: {},
   habilitaciones: [],
-  sedes: [],                    // ← NUEVO
+  presets: [],
+  sedes: [],
   modoAcceso: "lector",
   cargando: true,
   actualizando: false,
@@ -203,7 +218,7 @@ export const useStore = create<AppState>((set, get) => ({
         ots: d.ots,
         actividades: d.actividades,
         cronograma: d.cronograma,
-        sedes: d.sedes ?? [],     // ← NUEVO
+        sedes: d.sedes ?? [],
         modoAcceso: d.modoAcceso,
         cargando: false,
       });
@@ -227,7 +242,7 @@ export const useStore = create<AppState>((set, get) => ({
         ots: d.ots,
         actividades: d.actividades,
         cronograma: d.cronograma,
-        sedes: d.sedes ?? [],     // ← NUEVO
+        sedes: d.sedes ?? [],
         modoAcceso: d.modoAcceso,
         actualizando: false,
       });
@@ -892,7 +907,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  // ===== Sedes CRUD (sincroniza Admin ↔ Mapa en tiempo real) =====
+  // ===== Sedes CRUD =====
   agregarSede: async (s) => {
     try {
       const res = await fetch("/api/sedes", {
@@ -974,6 +989,161 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       get().showToast(`Excel sincronizado (${json.data.count} sedes)`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
+      return false;
+    }
+  },
+
+  // ===== Presets de Sedes =====
+  cargarPresets: async () => {
+    try {
+      const res = await fetch("/api/presets", { cache: "no-store" });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      set({ presets: json.data });
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al cargar presets", "error");
+    }
+  },
+
+  agregarPresetSede: async (sedeNombre) => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar_sede", sede_nombre: sedeNombre }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarPresets();
+      get().showToast(`Preset para ${sedeNombre} creado`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al crear preset", "error");
+      return false;
+    }
+  },
+
+  eliminarPresetSede: async (id) => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar_sede", id }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarPresets();
+      get().showToast("Preset eliminado", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al eliminar preset", "error");
+      return false;
+    }
+  },
+
+  agregarPresetDocumento: async (presetSedeId, doc) => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar_documento", presetSedeId, documento: doc }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarPresets();
+      get().showToast("Documento agregado al preset", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al agregar documento al preset", "error");
+      return false;
+    }
+  },
+
+  eliminarPresetDocumento: async (id) => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar_documento", id }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarPresets();
+      get().showToast("Documento eliminado del preset", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al eliminar documento del preset", "error");
+      return false;
+    }
+  },
+
+  agregarPresetSubDoc: async (presetDocId, sub) => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "agregar_subdoc", presetDocId, sub }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarPresets();
+      get().showToast("Sub-documento agregado al preset", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al agregar sub-doc al preset", "error");
+      return false;
+    }
+  },
+
+  eliminarPresetSubDoc: async (id) => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar_subdoc", id }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarPresets();
+      get().showToast("Sub-documento eliminado del preset", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al eliminar sub-doc del preset", "error");
+      return false;
+    }
+  },
+
+  aplicarPresetATecnico: async (presetSedeId, tecnicoId, copiarFechas) => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "aplicar_a_tecnico", presetSedeId, tecnicoId, copiarFechas }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarHabilitaciones();
+      get().showToast(`Preset aplicado (${json.data.creadas} documentos creados)`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al aplicar preset", "error");
+      return false;
+    }
+  },
+
+  sincronizarPresetsExcel: async () => {
+    try {
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "sincronizar", presets: get().presets }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      get().showToast(`Excel sincronizado (${json.data.count} presets)`, "ok");
       return true;
     } catch (err) {
       get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
