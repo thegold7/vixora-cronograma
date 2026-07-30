@@ -1011,4 +1011,275 @@ function SidebarTecnicoHabilitaciones({
                                             <div className="mt-1 p-1 bg-white rounded border border-blue-200 space-y-1">
                                               <div className="text-[9px] font-bold text-blue-700">Editando sub-documento</div>
                                               <input type="text" value={editandoSubDoc.sub.nombre} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, nombre: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
-                                              <input type="date" value={editandoSubDoc.sub.fecha_vencimiento} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, fecha_vencimiento: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px]
+                                              <input type="date" value={editandoSubDoc.sub.fecha_vencimiento} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, fecha_vencimiento: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <input type="text" placeholder="URL" value={editandoSubDoc.sub.enlace_url || ""} onChange={(e) => setEditandoSubDoc({ id: editandoSubDoc.id, sub: { ...editandoSubDoc.sub, enlace_url: e.target.value }, parentId: editandoSubDoc.parentId })} className="w-full px-1 py-0.5 text-[9px] border border-gray-200 rounded" />
+                                              <div className="flex gap-1">
+                                                <button
+                                                  onClick={async () => {
+                                                    await onActualizarSubDoc(editandoSubDoc.id, editandoSubDoc.sub);
+                                                    setEditandoSubDoc(null);
+                                                  }}
+                                                  className="flex-1 py-0.5 text-[9px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b]"
+                                                >
+                                                  Guardar
+                                                </button>
+                                                <button onClick={() => setEditandoSubDoc(null)} className="px-1 py-0.5 text-[9px] text-gray-500 border border-gray-200 rounded">X</button>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* FIX: Añadir habilitación eligiendo SEDE primero, OT opcional */}
+          {modoAcceso === "editor" && (
+            <div className="mt-3 p-2 bg-gray-50 rounded border border-gray-200 space-y-1">
+              <div className="text-[10px] font-bold text-gray-700">Añadir habilitación</div>
+              <select
+                value={nuevaSedeSel}
+                onChange={(e) => { setNuevaSedeSel(e.target.value); setNuevaOtSel(""); }}
+                className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded bg-white"
+              >
+                <option value="">Selecciona Sede *</option>
+                {sedes.map(s => <option key={s.nombre} value={s.nombre}>{s.nombre}</option>)}
+              </select>
+              <select
+                value={nuevaOtSel}
+                onChange={(e) => setNuevaOtSel(e.target.value)}
+                className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded bg-white"
+                disabled={!nuevaSedeSel}
+              >
+                <option value="">OT (opcional)</option>
+                {otsDeSedeSel.map(o => <option key={o.codigo} value={o.codigo}>{o.codigo} - {o.cliente}</option>)}
+              </select>
+              <input type="text" placeholder="Nombre documento (ej: EMO, Curso Alturas)" value={nuevoDocNombre} onChange={(e) => setNuevoDocNombre(e.target.value)} className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded" />
+              <input type="date" value={nuevoDocFecha} onChange={(e) => setNuevoDocFecha(e.target.value)} className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded" />
+              <input type="text" placeholder="Enlace URL (opcional)" value={nuevoDocEnlace} onChange={(e) => setNuevoDocEnlace(e.target.value)} className="w-full px-1 py-1 text-[10px] border border-gray-200 rounded" />
+              <button
+                onClick={handleAgregarHab}
+                className="w-full py-1 text-[10px] text-white bg-[#E91E63] rounded hover:bg-[#c2185b] flex items-center justify-center gap-1"
+              >
+                <Plus size={10} /> Añadir habilitación
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+// =============================================================
+// SUBCOMPONENTE: Modal replicar setup (copia individual)
+// =============================================================
+function ModalReplicarSetup({
+  tecnicoOrigen, tecnicosDestino, habilitacionesOrigen, onClose, onReplicar,
+}: {
+  tecnicoOrigen: any;
+  tecnicosDestino: any[];
+  habilitacionesOrigen: Habilitacion[];
+  onClose: () => void;
+  onReplicar: (destinoIds: string[], copiarEstructura: boolean) => Promise<void>;
+}) {
+  const [seleccionados, setSeleccionados] = useState<string[]>([]);
+  const [copiarEstructura, setCopiarEstructura] = useState(true);
+  const [busqueda, setBusqueda] = useState("");
+  const [replicando, setReplicando] = useState(false);
+
+  const tecnicosFiltrados = useMemo(() => {
+    if (!busqueda) return tecnicosDestino;
+    const q = busqueda.toLowerCase();
+    return tecnicosDestino.filter(t =>
+      t.id.toLowerCase().includes(q) ||
+      t.nombre.toLowerCase().includes(q) ||
+      t.cargo.toLowerCase().includes(q)
+    );
+  }, [tecnicosDestino, busqueda]);
+
+  const toggleSeleccion = (id: string) => {
+    setSeleccionados(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const seleccionarTodos = () => {
+    if (seleccionados.length === tecnicosFiltrados.length) {
+      setSeleccionados([]);
+    } else {
+      setSeleccionados(tecnicosFiltrados.map(t => t.id));
+    }
+  };
+
+  const handleReplicar = async () => {
+    if (seleccionados.length === 0) {
+      alert("Selecciona al menos un técnico destino");
+      return;
+    }
+    if (!confirm(`¿Replicar ${habilitacionesOrigen.length} habilitacion(es) a ${seleccionados.length} técnico(s)?`)) return;
+    setReplicando(true);
+    await onReplicar(seleccionados, copiarEstructura);
+    setReplicando(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-2xl w-[95%] max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-4 py-3 flex items-center justify-between text-white" style={{ backgroundColor: "#1d1d1f" }}>
+          <div>
+            <div className="text-sm font-bold">Replicar setup de habilitaciones</div>
+            <div className="text-[10px] text-white/60">Origen: {tecnicoOrigen.nombre} · {habilitacionesOrigen.length} documento(s)</div>
+          </div>
+          <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18} /></button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto flex-1">
+          <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+            <input type="checkbox" checked={copiarEstructura} onChange={(e) => setCopiarEstructura(e.target.checked)} />
+            <span>Solo estructura (sin fechas) — recomendado. Si desmarcas, se copiarán también las fechas de vencimiento.</span>
+          </label>
+          <div className="flex gap-2 items-center">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input type="text" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar técnico destino..." className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded" />
+            </div>
+            <button onClick={seleccionarTodos} className="text-xs text-[#E91E63] hover:underline">
+              {seleccionados.length === tecnicosFiltrados.length ? "Quitar todos" : "Seleccionar todos"}
+            </button>
+          </div>
+          <div className="border border-gray-200 rounded max-h-96 overflow-y-auto">
+            {tecnicosFiltrados.length === 0 ? (
+              <div className="p-4 text-center text-xs text-gray-400">No hay técnicos disponibles</div>
+            ) : (
+              tecnicosFiltrados.map(t => (
+                <label key={t.id} className="flex items-center gap-2 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
+                  <input type="checkbox" checked={seleccionados.includes(t.id)} onChange={() => toggleSeleccion(t.id)} />
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold text-gray-900">{t.nombre}</div>
+                    <div className="text-[10px] text-gray-500">{t.cargo} · {t.id}</div>
+                  </div>
+                </label>
+              ))
+            )}
+          </div>
+          <div className="text-[10px] text-gray-500">
+            {seleccionados.length} técnico(s) seleccionado(s) · Se crearán {seleccionados.length * habilitacionesOrigen.length} habilitación(es) en total
+          </div>
+        </div>
+        <div className="border-t border-gray-200 p-3 flex justify-end gap-2">
+          <button onClick={onClose} disabled={replicando} className="px-3 py-1.5 text-xs border border-gray-200 rounded hover:bg-gray-50">Cancelar</button>
+          <button onClick={handleReplicar} disabled={replicando || seleccionados.length === 0} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-[#E91E63] hover:bg-[#c2185b] disabled:opacity-50">
+            <Copy size={14} /> {replicando ? "Replicando..." : `Replicar a ${seleccionados.length}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================
+// SUBCOMPONENTE: Modal aplicar preset de sede
+// =============================================================
+function ModalAplicarPreset({
+  tecnico, presets, onClose, onAplicar,
+}: {
+  tecnico: any;
+  presets: any[];
+  onClose: () => void;
+  onAplicar: (presetSedeId: string, copiarFechas: boolean) => Promise<void>;
+}) {
+  const [presetSel, setPresetSel] = useState("");
+  const [copiarFechas, setCopiarFechas] = useState(false);
+  const [aplicando, setAplicando] = useState(false);
+
+  const handleAplicar = async () => {
+    if (!presetSel) {
+      alert("Selecciona un preset");
+      return;
+    }
+    const preset = presets.find(p => p.id === presetSel);
+    if (!preset) return;
+    if (!confirm(`¿Aplicar preset de ${preset.sede_nombre} (${preset.documentos.length} documentos) a ${tecnico.nombre}?`)) return;
+    setAplicando(true);
+    await onAplicar(presetSel, copiarFechas);
+    setAplicando(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-2xl w-[95%] max-w-md max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-4 py-3 flex items-center justify-between text-white" style={{ backgroundColor: "#1d1d1f" }}>
+          <div>
+            <div className="text-sm font-bold">Aplicar preset de sede</div>
+            <div className="text-[10px] text-white/60">A: {tecnico.nombre}</div>
+          </div>
+          <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18} /></button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          {presets.length === 0 ? (
+            <div className="text-center py-4 text-xs text-gray-400">
+              No hay presets creados. Ve a la sección "Presets de Sedes" al final de la página para crear uno.
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="text-[10px] font-semibold text-gray-500 uppercase">Preset de sede *</label>
+                <select value={presetSel} onChange={(e) => setPresetSel(e.target.value)} className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded bg-white mt-1">
+                  <option value="">Selecciona preset...</option>
+                  {presets.map(p => (
+                    <option key={p.id} value={p.id}>{p.sede_nombre} ({p.documentos.length} docs)</option>
+                  ))}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                <input type="checkbox" checked={copiarFechas} onChange={(e) => setCopiarFechas(e.target.checked)} />
+                <span>Copiar fechas del preset (si las tiene). Si desmarcas, se crearán documentos sin fecha para llenar manualmente.</span>
+              </label>
+              {presetSel && (
+                <div className="p-2 bg-purple-50 rounded text-[10px] text-gray-600">
+                  {(() => {
+                    const p = presets.find(x => x.id === presetSel);
+                    if (!p) return null;
+                    return (
+                      <>
+                        <div className="font-bold mb-1">{p.sede_nombre}</div>
+                        {p.documentos.map((d: any) => (
+                          <div key={d.id}>
+                            • {d.nombre}
+                            {d.fecha_vencimiento && <span className="text-gray-500"> (vence {d.fecha_vencimiento.split("-").reverse().join("/")})</span>}
+                            {d.sub_documentos?.length > 0 && <span className="text-gray-400"> — {d.sub_documentos.length} sub-doc(s)</span>}
+                          </div>
+                        ))}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="border-t border-gray-200 p-3 flex justify-end gap-2">
+          <button onClick={onClose} disabled={aplicando} className="px-3 py-1.5 text-xs border border-gray-200 rounded hover:bg-gray-50">Cancelar</button>
+          <button
+            onClick={handleAplicar}
+            disabled={aplicando || !presetSel || presets.length === 0}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded bg-purple-600 hover:bg-purple-700 disabled:opacity-50"
+          >
+            <Wand2 size={14} /> {aplicando ? "Aplicando..." : "Aplicar preset"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
