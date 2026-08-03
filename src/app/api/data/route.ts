@@ -2,10 +2,10 @@
  * GET /api/data
  * Devuelve TODOS los datos necesarios para renderizar la app:
  *   - tecnicos
- *   - ots
+ *   - ots (deduplicadas + defaults aplicados)
  *   - actividades
  *   - cronograma
- *   - sedes          ← NUEVO: para que el mapa y el admin compartan la misma fuente
+ *   - sedes (auto-creadas si hay nuevas en OTs)
  *   - modoAcceso
  */
 import { NextResponse } from "next/server";
@@ -15,6 +15,7 @@ import {
   getActividades,
   getCronogramaMap,
   getSedes,
+  autoCreateMissingSedes,
 } from "@/lib/sheets";
 import { getModoAcceso } from "@/lib/auth";
 
@@ -23,12 +24,20 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    const [tecnicos, allOts, actividades, cronograma, sedes, modoAcceso] = await Promise.all([
+    // FIX: leer OTs primero (con deduplicación y defaults)
+    const allOts = await getOTs();
+
+    // FIX: obtener sedes actuales
+    const sedesActuales = await getSedes();
+
+    // FIX: Auto-crear sedes faltantes en base a las OTs
+    // Esto asegura que toda OT tenga su sede en la hoja Sedes (sin duplicados)
+    const sedesFinales = await autoCreateMissingSedes(allOts, sedesActuales);
+
+    const [tecnicos, actividades, cronograma, modoAcceso] = await Promise.all([
       getTecnicos(),
-      getOTs(),
       getActividades(),
       getCronogramaMap(),
-      getSedes(),
       getModoAcceso(),
     ]);
 
@@ -39,7 +48,7 @@ export async function GET() {
         ots: allOts,
         actividades,
         cronograma,
-        sedes,             // ← NUEVO
+        sedes: sedesFinales,
         modoAcceso,
       },
     });
