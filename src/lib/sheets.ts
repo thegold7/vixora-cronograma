@@ -52,6 +52,20 @@ async function readSheet<T>(sheetName: string, mapper: (row: string[]) => T): Pr
     .map((r) => mapper(r));
 }
 
+// FIX: Normalizar estados del Excel a los 5 canónicos de la web.
+// COMPLETADO → FINALIZADO; EN PROCESO → EN PROCESO; etc.
+// Cancelado y perdido se mantienen y se muestran en el mapa.
+function normalizeEstado(raw: string): string {
+  const e = (raw || "").trim().toUpperCase();
+  if (e === "COMPLETADO") return "FINALIZADO";
+  if (e === "EN PROCESO") return "EN PROCESO";
+  if (e === "FINALIZADO") return "FINALIZADO";
+  if (e === "PENDIENTE") return "PENDIENTE";
+  if (e === "PERDIDO") return "PERDIDO";
+  if (e === "CANCELADO") return "CANCELADO";
+  return e || "PENDIENTE";
+}
+
 // ============================================================
 // TÉCNICOS
 // ============================================================
@@ -74,7 +88,7 @@ export async function getTecnicosActivos(): Promise<Tecnico[]> {
 }
 
 // ============================================================
-// OTs - CON DEDUPLICACIÓN Y DEFAULTS
+// OTs - CON DEDUPLICACIÓN, NORMALIZACIÓN DE ESTADO Y DEFAULTS
 // ============================================================
 export async function getOTs(): Promise<OT[]> {
   const sheets = getClient();
@@ -83,36 +97,34 @@ export async function getOTs(): Promise<OT[]> {
     range: "OTs!A2:Z",
   });
   const rows = (res.data.values ?? []) as string[][];
-  
-  // FIX: Deduplicar por codigo. Primera ocurrencia gana (manuales tienen prioridad).
+
   const seen = new Set<string>();
   const result: OT[] = [];
-  
+
   for (const r of rows) {
     if (r.length === 0 || !r.some((c) => c && c.trim() !== "")) continue;
-    
     const codigo = (r[0] ?? "").trim();
-    if (!codigo) continue; // saltar filas vacías
-    
-    // FIX: Saltar duplicados
+    if (!codigo) continue;
     if (seen.has(codigo.toUpperCase())) continue;
     seen.add(codigo.toUpperCase());
-    
-    const estado = (r[3] ?? "").trim().toUpperCase();
+
+    const estadoRaw = (r[3] ?? "").trim();
+    const estado = normalizeEstado(estadoRaw);
     const activoRaw = (r[4] ?? "").trim().toUpperCase();
     const visibleRaw = (r[5] ?? "").trim().toUpperCase();
-    
+
     result.push({
       codigo,
       cliente: (r[1] ?? "").trim(),
       sede: (r[2] ?? "").trim(),
+      // FIX: estado normalizado. Permite CANCELADO y PERDIDO (se mostrarán en mapa).
+      estado,
       // FIX: defaults si vienen del IMPORTRANGE (campos vacíos)
-      estado: estado || "PENDIENTE",
       activo: activoRaw === "" ? true : activoRaw === "TRUE",
       visible_mapa: visibleRaw === "" ? true : visibleRaw === "TRUE",
     });
   }
-  
+
   return result;
 }
 
@@ -121,21 +133,81 @@ export async function getOTsActivas(): Promise<OT[]> {
   return all.filter((o) => o.activo);
 }
 
+// FIX: Auto-llenar columnas activo y visible_mapa vacías en el Excel.
+// Recorre la hoja OTs y si encuentra fila con código pero activo/visible vacíos,
+// les pone "TRUE" y "TRUE" respectivamente. No toca filas ya llenas.
+// También normaliza COMPLETADO → FINALIZADO en la columna D.
+export async function fillEmptyOtFields(): Promise<{ ok: true; updated: number }> {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: "OTs!A2:F",
+  });
+  const rows = (res.data.values ?? []) as string[][];
+
+  let updated = 0;
+  const batchUpdates: { range: string; values: string[][] }[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const codigo = (r[0] ?? "").trim();
+    if (!codigo) continue;
+
+    const rowNumber = i + 2;
+    const estadoRaw = (r[3] ?? "").trim();
+    const estadoNorm = normalizeEstado(estadoRaw);
+    const activoRaw = (r[4] ?? "").trim().toUpperCase();
+    const visibleRaw = (r[5] ?? "").trim().toUpperCase();
+
+    const needsEstadoUpdate = estadoRaw !== "" && estadoRaw.toUpperCase() !== estadoNorm.toUpperCase();
+    const needsActivo = activoRaw === "";
+    const needsVisible = visibleRaw === "";
+
+    if (!needsEstadoUpdate && !needsActivo && !needsVisible) continue;
+
+    const newEstado = needsEstadoUpdate ? estadoNorm : estadoRaw;
+    const newActivo = needsActivo ? "TRUE" : (activoRaw === "TRUE" ? "TRUE" : "FALSE");
+    const newVisible = needsVisible ? "TRUE" : (visibleRaw === "TRUE" ? "TRUE" : "FALSE");
+
+    batchUpdates.push({
+      range: `OTs!D${rowNumber}:F${rowNumber}`,
+      values: [[newEstado, newActivo, newVisible]],
+    });
+    updated++;
+  }
+
+  // Aplicar updates en batch usando batchUpdate
+  if (batchUpdates.length > 0) {
+    const data = batchUpdates.map(u => ({
+      range: u.range,
+      values: u.values,
+    }));
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: getSheetId(),
+      requestBody: {
+        valueInputOption: "USER_ENTERED",
+        data,
+      },
+    });
+  }
+
+  return { ok: true, updated };
+}
+
 // ============================================================
 // AUTO-CREAR SEDES FALTANTES
-// Si una OT tiene una sede que no existe en la hoja Sedes, se crea con coords (0,0)
 // ============================================================
 export async function autoCreateMissingSedes(ots: OT[], sedesActuales: Sede[]): Promise<Sede[]> {
   const sedesExistentes = new Set(sedesActuales.map(s => s.nombre.toUpperCase()));
   const sedesNuevas: Sede[] = [];
   const sedesNuevasNombres = new Set<string>();
-  
+
   for (const ot of ots) {
     const sedeNombre = (ot.sede || "").trim();
     if (!sedeNombre) continue;
     if (sedesExistentes.has(sedeNombre.toUpperCase())) continue;
     if (sedesNuevasNombres.has(sedeNombre.toUpperCase())) continue;
-    
+
     sedesNuevasNombres.add(sedeNombre.toUpperCase());
     sedesNuevas.push({
       nombre: sedeNombre,
@@ -148,12 +220,11 @@ export async function autoCreateMissingSedes(ots: OT[], sedesActuales: Sede[]): 
       visible: true,
     });
   }
-  
+
   if (sedesNuevas.length === 0) {
     return sedesActuales;
   }
-  
-  // Añadir las sedes nuevas al Excel
+
   const sheets = getClient();
   const values = sedesNuevas.map(s => [s.nombre, s.lat, s.lng, s.region, s.ciudad, s.datoCurioso, s.foto_ciudad, s.visible ? "TRUE" : "FALSE"]);
   await sheets.spreadsheets.values.append({
@@ -163,7 +234,7 @@ export async function autoCreateMissingSedes(ots: OT[], sedesActuales: Sede[]): 
     insertDataOption: "INSERT_ROWS",
     requestBody: { values },
   });
-  
+
   return [...sedesActuales, ...sedesNuevas];
 }
 
@@ -345,24 +416,24 @@ export async function updateOtEstado(codigo: string, nuevoEstado: string): Promi
     if ((rows[i][0] ?? "").trim().toUpperCase() === codigo.toUpperCase()) { rowNumber = i + 2; break; }
   }
   if (rowNumber < 0) throw new Error(`OT ${codigo} no encontrada`);
-  const estadoUpper = nuevoEstado.toUpperCase();
-  const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
+  const estadoNorm = normalizeEstado(nuevoEstado);
+  const activo = (estadoNorm === "EN PROCESO" || estadoNorm === "PENDIENTE") ? "TRUE" : "FALSE";
   const visibleActual = (rows[rowNumber - 2][5] ?? "TRUE").toUpperCase() === "TRUE" ? "TRUE" : "FALSE";
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(), range: `OTs!D${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[estadoUpper, activo, visibleActual]] },
+    requestBody: { values: [[estadoNorm, activo, visibleActual]] },
   });
   return { ok: true };
 }
 
 export async function addOt(codigo: string, cliente: string, sede: string, estado: string): Promise<{ ok: true }> {
   const sheets = getClient();
-  const estadoUpper = estado.toUpperCase();
-  const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
+  const estadoNorm = normalizeEstado(estado);
+  const activo = (estadoNorm === "EN PROCESO" || estadoNorm === "PENDIENTE") ? "TRUE" : "FALSE";
   const all = await getOTs();
   if (all.some((o) => o.codigo.toUpperCase() === codigo.toUpperCase())) throw new Error(`Ya existe una OT con código ${codigo}`);
-  const values = [[codigo, cliente, sede, estadoUpper, activo, "TRUE"]];
+  const values = [[codigo, cliente, sede, estadoNorm, activo, "TRUE"]];
   await sheets.spreadsheets.values.append({
     spreadsheetId: getSheetId(), range: "OTs!A:F",
     valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values },
@@ -380,19 +451,18 @@ export async function updateOt(codigoOriginal: string, nuevoCodigo: string, clie
   }
   if (rowNumber < 0) throw new Error(`OT ${codigoOriginal} no encontrada`);
   if (nuevoCodigo !== codigoOriginal && rows.some(r => (r[0] ?? "").trim().toUpperCase() === nuevoCodigo.toUpperCase())) throw new Error(`Ya existe una OT con código ${nuevoCodigo}`);
-  const estadoUpper = estado.toUpperCase();
-  const activo = (estadoUpper === "EN PROCESO" || estadoUpper === "PENDIENTE") ? "TRUE" : "FALSE";
+  const estadoNorm = normalizeEstado(estado);
+  const activo = (estadoNorm === "EN PROCESO" || estadoNorm === "PENDIENTE") ? "TRUE" : "FALSE";
   const visibleActual = (rows[rowNumber - 2][5] ?? "TRUE").toUpperCase() === "TRUE" ? "TRUE" : "FALSE";
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(), range: `OTs!A${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[nuevoCodigo, cliente, sede, estadoUpper, activo, visibleActual]] },
+    requestBody: { values: [[nuevoCodigo, cliente, sede, estadoNorm, activo, visibleActual]] },
   });
   return { ok: true };
 }
 
 export async function deleteOt(codigo: string): Promise<{ ok: true }> {
-  // FIX: Solo eliminar la primera ocurrencia (la manual), preservando el IMPORTRANGE
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: getSheetId(), range: "OTs!A2:F" });
   const rows = (res.data.values ?? []) as string[][];
@@ -401,9 +471,6 @@ export async function deleteOt(codigo: string): Promise<{ ok: true }> {
     if ((rows[i][0] ?? "").trim().toUpperCase() === codigo.toUpperCase()) { rowNumber = i + 2; break; }
   }
   if (rowNumber < 0) throw new Error(`OT ${codigo} no encontrada`);
-  
-  // Limpiar esa fila específica (no podemos borrar filas individuales fácilmente sin romper IMPORTRANGE)
-  // Mejor: marcarla como PERDIDO + activo=FALSE para que desaparezca de la web
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSheetId(), range: `OTs!D${rowNumber}:E${rowNumber}`,
     valueInputOption: "USER_ENTERED",
