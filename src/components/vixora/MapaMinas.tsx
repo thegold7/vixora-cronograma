@@ -54,7 +54,6 @@ export function MapaMinas() {
   const [ocultarSinOts, setOcultarSinOts] = useState(false);
   const [panelSedesAbierto, setPanelSedesAbierto] = useState(false);
   const [nuevaSede, setNuevaSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
-  // FIX: estado para manejar el popup de sedes agrupadas
   const [grupoSeleccionado, setGrupoSeleccionado] = useState<MinaAgrupada[] | null>(null);
 
   const hoy = new Date();
@@ -96,7 +95,6 @@ export function MapaMinas() {
     return sedes.map(s => ({ ...s, visible: s.visible ?? true }));
   }, [sedes]);
 
-  // FIX: ya NO se filtran las OTs con estado PERDIDO o CANCELADO. Se muestran todas.
   const otsValidas = useMemo(() => {
     return ots.filter(o => o.visible_mapa !== false);
   }, [ots]);
@@ -227,15 +225,13 @@ export function MapaMinas() {
     return minasFiltradasLista.filter(g => g.coord.visible !== false);
   }, [minasFiltradasLista]);
 
-  // FIX: Agrupar sedes por coordenadas cercanas (mismo punto o muy juntas)
   const gruposCercanos = useMemo(() => {
     const grupos: MinaAgrupada[][] = [];
-    const umbral = 0.05; // grados de diferencia mínima para considerar "separadas"
+    const umbral = 0.05;
 
     for (const mina of minasParaMapa) {
       let agregada = false;
       for (const grupo of grupos) {
-        // Comparar con la primera del grupo
         const primera = grupo[0];
         const dist = Math.sqrt(
           Math.pow(mina.coord.lat - primera.coord.lat, 2) +
@@ -356,7 +352,35 @@ export function MapaMinas() {
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
-  // FIX: Renderizar marcadores con agrupación de sedes superpuestas
+  // FIX: Helper para crear el badge con el contador de OTs (blanco, texto oscuro)
+  const crearBadgeContador = (total: number): L.DivIcon => {
+    return L.divIcon({
+      className: 'ot-counter-badge',
+      html: `<div style="
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        background: #ffffff;
+        color: #1d1d1f;
+        border-radius: 50%;
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        border: 1.5px solid #1d1d1f;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        font-family: -apple-system, sans-serif;
+        z-index: 1000;
+      ">${total}</div>`,
+      iconSize: [0, 0],
+      iconAnchor: [0, 0],
+    });
+  };
+
+  // FIX: Renderizar marcadores con badge de contador y tamaños reducidos
   useEffect(() => {
     if (!mapRef.current) return;
     markersRef.current.forEach(m => m.remove());
@@ -374,14 +398,39 @@ export function MapaMinas() {
       return "#6b7280";
     };
 
+    // FIX: Tamaños reducidos y uniformes entre naranja y verde
+    const getRadius = (total: number) => {
+      if (total === 0) return 5;
+      // Escala más compacta: 6 a 14 (antes era 8 a 25)
+      return Math.min(6 + total, 14);
+    };
+
     for (const grupo of gruposCercanos) {
       if (grupo.length === 1) {
-        // Sede única
         const mina = grupo[0];
         const { coord, enProceso, finalizado, pendiente, perdido, cancelado, total } = mina;
         const color = getColor(mina);
-        const radius = total > 0 ? Math.min(8 + total * 2, 25) : 6;
-        const marker = L.circleMarker([coord.lat, coord.lng], { radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8 }).addTo(mapRef.current!);
+        const radius = getRadius(total);
+
+        const marker = L.circleMarker([coord.lat, coord.lng], {
+          radius,
+          fillColor: color,
+          color: "#ffffff",
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.85
+        }).addTo(mapRef.current!);
+
+        // FIX: Badge con contador de OTs (todos los marcadores con total > 0)
+        if (total > 0) {
+          marker.bindTooltip(`${total} OTs`, {
+            permanent: true,
+            direction: 'center',
+            className: 'ot-count-label',
+            offset: L.point(0, -radius - 12)
+          });
+        }
+
         const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span><span style="color: #6b7280;">⚫ ${perdido}</span><span style="color: #9ca3af;">⊘ ${cancelado}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
         marker.bindPopup(popupHtml);
         marker.on("click", () => {
@@ -390,9 +439,8 @@ export function MapaMinas() {
         });
         markersRef.current.push(marker);
       } else {
-        // FIX: Grupo de sedes superpuestas - mostrar un solo marcador con el número
+        // Grupo de sedes superpuestas
         const primera = grupo[0];
-        // Calcular totales agregados
         const totalOts = grupo.reduce((sum, g) => sum + g.total, 0);
         const totalEnProceso = grupo.reduce((sum, g) => sum + g.enProceso, 0);
         const totalFinalizado = grupo.reduce((sum, g) => sum + g.finalizado, 0);
@@ -400,26 +448,29 @@ export function MapaMinas() {
         const totalPerdido = grupo.reduce((sum, g) => sum + g.perdido, 0);
         const totalCancelado = grupo.reduce((sum, g) => sum + g.cancelado, 0);
 
-        // Color del grupo = el peor estado presente
         let color = "#6b7280";
         if (totalEnProceso > 0) color = "#f59e0b";
         else if (totalFinalizado > 0) color = "#10b981";
         else if (totalPendiente > 0) color = "#3b82f6";
 
-        const radius = Math.min(12 + totalOts * 2, 30);
+        // FIX: Radio del grupo también reducido (antes 12-30, ahora 8-16)
+        const radius = Math.min(8 + totalOts * 0.5, 16);
+
         const marker = L.circleMarker([primera.coord.lat, primera.coord.lng], {
-          radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8
+          radius,
+          fillColor: color,
+          color: "#ffffff",
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.85
         }).addTo(mapRef.current!);
 
-        // FIX: Badge con el número de sedes agrupadas
-        const badgeHtml = `<div style="position: absolute; top: -8px; right: -8px; background: #E91E63; color: white; border-radius: 50%; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; border: 2px solid white;">${grupo.length}</div>`;
-        const icon = L.divIcon({
-          html: `<div style="position: relative; width: 0; height: 0;">${badgeHtml}</div>`,
-          className: '',
-          iconSize: [0, 0],
+        // FIX: Badge con número de sedes agrupadas (más chico, texto oscuro)
+        marker.bindTooltip(`${grupo.length} sedes · ${totalOts} OTs`, {
+          permanent: false,
+          direction: 'top',
+          offset: L.point(0, -radius - 8)
         });
-        // No podemos adjuntar divIcon a circleMarker directamente, usamos tooltip
-        marker.bindTooltip(`${grupo.length} sedes`, { permanent: false, direction: 'top', offset: L.point(8, -8) });
 
         const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 200px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">📍 ${grupo.length} sedes en esta ubicación</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">Click para ver el listado</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${totalEnProceso}</span><span style="color: #10b981;">✓ ${totalFinalizado}</span><span style="color: #3b82f6;">⏳ ${totalPendiente}</span><span style="color: #6b7280;">⚫ ${totalPerdido}</span><span style="color: #9ca3af;">⊘ ${totalCancelado}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${totalOts} OT(s)</div></div>`;
         marker.bindPopup(popupHtml);
@@ -559,7 +610,6 @@ export function MapaMinas() {
           <div ref={containerRef} className="w-full h-full" style={{ minHeight: "400px" }} />
         </div>
 
-        {/* Panel flotante gestionar sedes */}
         {panelSedesAbierto && (
           <div className="absolute top-2 right-2 w-80 bg-white rounded-lg shadow-2xl border border-gray-200 z-[1000] max-h-[calc(100%-2rem)] flex flex-col">
             <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
@@ -608,7 +658,6 @@ export function MapaMinas() {
           </div>
         )}
 
-        {/* FIX: Modal para seleccionar sede cuando hay varias agrupadas */}
         {grupoSeleccionado && (
           <div className="absolute top-2 right-2 w-80 bg-white rounded-lg shadow-2xl border-2 border-[#E91E63] z-[1001] max-h-[calc(100%-2rem)] flex flex-col">
             <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#E91E63" }}>
