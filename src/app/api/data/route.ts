@@ -1,12 +1,7 @@
 /**
  * GET /api/data
- * Devuelve TODOS los datos necesarios para renderizar la app:
- *   - tecnicos
- *   - ots (deduplicadas + defaults aplicados)
- *   - actividades
- *   - cronograma
- *   - sedes (auto-creadas si hay nuevas en OTs)
- *   - modoAcceso
+ * Devuelve TODOS los datos necesarios para renderizar la app.
+ * FIX: ahora también auto-llena activo/visible_mapa vacíos del IMPORTRANGE.
  */
 import { NextResponse } from "next/server";
 import {
@@ -16,6 +11,7 @@ import {
   getCronogramaMap,
   getSedes,
   autoCreateMissingSedes,
+  fillEmptyOtFields,
 } from "@/lib/sheets";
 import { getModoAcceso } from "@/lib/auth";
 
@@ -24,14 +20,13 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    // FIX: leer OTs primero (con deduplicación y defaults)
     const allOts = await getOTs();
 
-    // FIX: obtener sedes actuales
-    const sedesActuales = await getSedes();
+    // FIX: Auto-llenar activo/visible_mapa vacíos (de IMPORTRANGE) en el Excel
+    // y normalizar COMPLETADO→FINALIZADO. Fire-and-forget (no bloquea el load).
+    fillEmptyOtFields().catch(err => console.error("[fillEmptyOtFields]", err));
 
-    // FIX: Auto-crear sedes faltantes en base a las OTs
-    // Esto asegura que toda OT tenga su sede en la hoja Sedes (sin duplicados)
+    const sedesActuales = await getSedes();
     const sedesFinales = await autoCreateMissingSedes(allOts, sedesActuales);
 
     const [tecnicos, actividades, cronograma, modoAcceso] = await Promise.all([
