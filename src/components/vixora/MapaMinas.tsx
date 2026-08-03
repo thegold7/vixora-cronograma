@@ -5,7 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import type { OT, Tecnico, Sede, EntradaCronograma } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp, Plus, Trash2, Settings, Save, Layers } from "lucide-react";
+import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp, Plus, Trash2, Settings, Hash } from "lucide-react";
 
 const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
   "PROYECTO MC": "MARCOBRE",
@@ -45,6 +45,7 @@ export function MapaMinas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.CircleMarker[]>([]);
   const groupMarkersRef = useRef<L.CircleMarker[]>([]);
+  const badgesRef = useRef<L.Marker[]>([]);
   const [selectedMina, setSelectedMina] = useState<MinaAgrupada | null>(null);
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
@@ -53,6 +54,7 @@ export function MapaMinas() {
   const [filtroFechasActivo, setFiltroFechasActivo] = useState(false);
   const [ocultarSinOts, setOcultarSinOts] = useState(false);
   const [panelSedesAbierto, setPanelSedesAbierto] = useState(false);
+  const [mostrarContadores, setMostrarContadores] = useState(true);
   const [nuevaSede, setNuevaSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
   const [grupoSeleccionado, setGrupoSeleccionado] = useState<MinaAgrupada[] | null>(null);
 
@@ -352,41 +354,43 @@ export function MapaMinas() {
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
-  // FIX: Helper para crear el badge con el contador de OTs (blanco, texto oscuro)
-  const crearBadgeContador = (total: number): L.DivIcon => {
+  // FIX: Crear icono de badge circular pequeño (blanco con borde oscuro)
+  const crearBadgeIcon = (total: number, radius: number): L.DivIcon => {
+    // Tamaño del badge proporcional al radio pero siempre pequeño (10-16px)
+    const badgeSize = Math.max(14, Math.min(radius + 4, 18));
     return L.divIcon({
-      className: 'ot-counter-badge',
+      className: 'ot-badge-icon',
       html: `<div style="
-        position: absolute;
-        top: -10px;
-        right: -10px;
+        width: ${badgeSize}px;
+        height: ${badgeSize}px;
         background: #ffffff;
-        color: #1d1d1f;
+        border: 1.5px solid #1d1d1f;
         border-radius: 50%;
-        width: 18px;
-        height: 18px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 10px;
+        font-size: ${Math.max(9, badgeSize - 5)}px;
         font-weight: 700;
-        border: 1.5px solid #1d1d1f;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-        font-family: -apple-system, sans-serif;
-        z-index: 1000;
+        color: #1d1d1f;
+        font-family: -apple-system, system-ui, sans-serif;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        line-height: 1;
       ">${total}</div>`,
-      iconSize: [0, 0],
-      iconAnchor: [0, 0],
+      iconSize: [badgeSize, badgeSize],
+      // Posicionar arriba a la derecha del marcador
+      iconAnchor: [badgeSize - 2, badgeSize - 2],
     });
   };
 
-  // FIX: Renderizar marcadores con badge de contador y tamaños reducidos
+  // Renderizar marcadores
   useEffect(() => {
     if (!mapRef.current) return;
     markersRef.current.forEach(m => m.remove());
     groupMarkersRef.current.forEach(m => m.remove());
+    badgesRef.current.forEach(m => m.remove());
     markersRef.current = [];
     groupMarkersRef.current = [];
+    badgesRef.current = [];
 
     const getColor = (g: MinaAgrupada) => {
       if (g.total === 0) return "#6b7280";
@@ -398,10 +402,8 @@ export function MapaMinas() {
       return "#6b7280";
     };
 
-    // FIX: Tamaños reducidos y uniformes entre naranja y verde
     const getRadius = (total: number) => {
       if (total === 0) return 5;
-      // Escala más compacta: 6 a 14 (antes era 8 a 25)
       return Math.min(6 + total, 14);
     };
 
@@ -421,16 +423,6 @@ export function MapaMinas() {
           fillOpacity: 0.85
         }).addTo(mapRef.current!);
 
-        // FIX: Badge con contador de OTs (todos los marcadores con total > 0)
-        if (total > 0) {
-          marker.bindTooltip(`${total} OTs`, {
-            permanent: true,
-            direction: 'center',
-            className: 'ot-count-label',
-            offset: L.point(0, -radius - 12)
-          });
-        }
-
         const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span><span style="color: #6b7280;">⚫ ${perdido}</span><span style="color: #9ca3af;">⊘ ${cancelado}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
         marker.bindPopup(popupHtml);
         marker.on("click", () => {
@@ -438,6 +430,17 @@ export function MapaMinas() {
           setOtsAsociadasExpandidas(false);
         });
         markersRef.current.push(marker);
+
+        // FIX: Badge circular pequeño con el contador
+        if (total > 0 && mostrarContadores) {
+          const badgeIcon = crearBadgeIcon(total, radius);
+          const badgeMarker = L.marker([coord.lat, coord.lng], {
+            icon: badgeIcon,
+            interactive: false, // no captura clicks, deja pasar al marcador principal
+            zIndexOffset: 1000,
+          }).addTo(mapRef.current!);
+          badgesRef.current.push(badgeMarker);
+        }
       } else {
         // Grupo de sedes superpuestas
         const primera = grupo[0];
@@ -453,7 +456,6 @@ export function MapaMinas() {
         else if (totalFinalizado > 0) color = "#10b981";
         else if (totalPendiente > 0) color = "#3b82f6";
 
-        // FIX: Radio del grupo también reducido (antes 12-30, ahora 8-16)
         const radius = Math.min(8 + totalOts * 0.5, 16);
 
         const marker = L.circleMarker([primera.coord.lat, primera.coord.lng], {
@@ -465,22 +467,26 @@ export function MapaMinas() {
           fillOpacity: 0.85
         }).addTo(mapRef.current!);
 
-        // FIX: Badge con número de sedes agrupadas (más chico, texto oscuro)
-        marker.bindTooltip(`${grupo.length} sedes · ${totalOts} OTs`, {
-          permanent: false,
-          direction: 'top',
-          offset: L.point(0, -radius - 8)
-        });
-
         const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 200px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">📍 ${grupo.length} sedes en esta ubicación</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">Click para ver el listado</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${totalEnProceso}</span><span style="color: #10b981;">✓ ${totalFinalizado}</span><span style="color: #3b82f6;">⏳ ${totalPendiente}</span><span style="color: #6b7280;">⚫ ${totalPerdido}</span><span style="color: #9ca3af;">⊘ ${totalCancelado}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${totalOts} OT(s)</div></div>`;
         marker.bindPopup(popupHtml);
         marker.on("click", () => {
           setGrupoSeleccionado(grupo);
         });
         groupMarkersRef.current.push(marker);
+
+        // FIX: Badge para grupo también
+        if (totalOts > 0 && mostrarContadores) {
+          const badgeIcon = crearBadgeIcon(totalOts, radius);
+          const badgeMarker = L.marker([primera.coord.lat, primera.coord.lng], {
+            icon: badgeIcon,
+            interactive: false,
+            zIndexOffset: 1000,
+          }).addTo(mapRef.current!);
+          badgesRef.current.push(badgeMarker);
+        }
       }
     }
-  }, [gruposCercanos]);
+  }, [gruposCercanos, mostrarContadores]);
 
   const zoomToMina = (mina: MinaAgrupada) => {
     if (!mapRef.current) return;
@@ -516,6 +522,14 @@ export function MapaMinas() {
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">🗺️ Mapa de Minas</div>
             <div className="flex gap-1">
+              {/* FIX: Botón para mostrar/ocultar contadores */}
+              <button
+                onClick={() => setMostrarContadores(!mostrarContadores)}
+                className={`p-1 rounded ${mostrarContadores ? "text-[#E91E63] bg-pink-50" : "text-gray-400 hover:text-gray-600"}`}
+                title={mostrarContadores ? "Ocultar contadores de OTs" : "Mostrar contadores de OTs"}
+              >
+                <Hash size={14} />
+              </button>
               <button
                 onClick={() => setPanelSedesAbierto(!panelSedesAbierto)}
                 className={`p-1 rounded ${panelSedesAbierto ? "text-[#E91E63] bg-pink-50" : "text-gray-500 hover:text-[#E91E63]"}`}
