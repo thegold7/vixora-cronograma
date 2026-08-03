@@ -5,9 +5,8 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import type { OT, Tecnico, Sede, EntradaCronograma } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp, Plus, Trash2, Settings, Save } from "lucide-react";
+import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp, Plus, Trash2, Settings, Save, Layers } from "lucide-react";
 
-// FIX: Mapeo de actividades a sedes (sigue siendo útil para PROYECTO MC, PROYECTO ANT)
 const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
   "PROYECTO MC": "MARCOBRE",
   "PROYECTO ANT": "ANTAPACCAY",
@@ -20,6 +19,8 @@ interface MinaAgrupada {
   enProceso: number;
   finalizado: number;
   pendiente: number;
+  perdido: number;
+  cancelado: number;
   total: number;
   hasActividadEnRango: boolean;
 }
@@ -34,7 +35,6 @@ interface TecnicoViaje {
 }
 
 export function MapaMinas() {
-  // FIX: ahora leemos sedes del store global (sincronizado con Admin)
   const {
     ots, cronograma, tecnicos, actividades, sedes,
     cargarDatosSilencioso, showToast,
@@ -44,6 +44,7 @@ export function MapaMinas() {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.CircleMarker[]>([]);
+  const groupMarkersRef = useRef<L.CircleMarker[]>([]);
   const [selectedMina, setSelectedMina] = useState<MinaAgrupada | null>(null);
   const [query, setQuery] = useState("");
   const [actualizando, setActualizando] = useState(false);
@@ -51,9 +52,10 @@ export function MapaMinas() {
   const [otsAsociadasExpandidas, setOtsAsociadasExpandidas] = useState(false);
   const [filtroFechasActivo, setFiltroFechasActivo] = useState(false);
   const [ocultarSinOts, setOcultarSinOts] = useState(false);
-  // FIX: panel para gestionar sedes (añadir/eliminar) dentro del mapa
   const [panelSedesAbierto, setPanelSedesAbierto] = useState(false);
   const [nuevaSede, setNuevaSede] = useState({ nombre: "", lat: "", lng: "", region: "", ciudad: "", datoCurioso: "", foto_ciudad: "" });
+  // FIX: estado para manejar el popup de sedes agrupadas
+  const [grupoSeleccionado, setGrupoSeleccionado] = useState<MinaAgrupada[] | null>(null);
 
   const hoy = new Date();
   const [inputInicio, setInputInicio] = useState(() => formatFechaISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1)));
@@ -90,18 +92,13 @@ export function MapaMinas() {
     setFiltroFechasActivo(false);
   };
 
-  // FIX: todasLasSedes ahora viene del store (sincronizado con Admin)
-  // Ya NO se mezcla con MINAS_PERU. El Excel es la única fuente de verdad.
   const todasLasSedes = useMemo(() => {
     return sedes.map(s => ({ ...s, visible: s.visible ?? true }));
   }, [sedes]);
 
+  // FIX: ya NO se filtran las OTs con estado PERDIDO o CANCELADO. Se muestran todas.
   const otsValidas = useMemo(() => {
-    return ots.filter(o => {
-      if (o.visible_mapa === false) return false;
-      if (o.estado === "PERDIDO") return false;
-      return true;
-    });
+    return ots.filter(o => o.visible_mapa !== false);
   }, [ots]);
 
   const otMap = useMemo(() => {
@@ -110,7 +107,6 @@ export function MapaMinas() {
     return m;
   }, [ots]);
 
-  // Búsqueda de sede por texto (en la lista del store)
   const buscarSede = (texto: string): Sede | null => {
     if (!texto) return null;
     const textoUpper = texto.toUpperCase().trim();
@@ -143,7 +139,6 @@ export function MapaMinas() {
     const sedesForEntry = new Set<string>();
     const sedeFromActividad = ACTIVIDAD_SEDE_MAP[e.actividad.toUpperCase()];
     if (sedeFromActividad) {
-      // Verificar que la sede exista en el store
       const existe = todasLasSedes.find(s => s.nombre.toUpperCase() === sedeFromActividad.toUpperCase());
       if (existe) sedesForEntry.add(existe.nombre);
     }
@@ -163,19 +158,22 @@ export function MapaMinas() {
   const minasAgrupadas = useMemo(() => {
     const grupos: Record<string, MinaAgrupada> = {};
     for (const sede of todasLasSedes) {
-      grupos[sede.nombre] = { coord: sede, ots: [], otsRealizandose: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
+      grupos[sede.nombre] = { coord: sede, ots: [], otsRealizandose: [], enProceso: 0, finalizado: 0, pendiente: 0, perdido: 0, cancelado: 0, total: 0, hasActividadEnRango: false };
     }
 
     for (const ot of otsValidas) {
       const coord = buscarSede(ot.sede) || buscarSede(ot.cliente);
       if (!coord) continue;
       const key = coord.nombre;
-      if (!grupos[key]) grupos[key] = { coord, ots: [], otsRealizandose: [], enProceso: 0, finalizado: 0, pendiente: 0, total: 0, hasActividadEnRango: false };
+      if (!grupos[key]) grupos[key] = { coord, ots: [], otsRealizandose: [], enProceso: 0, finalizado: 0, pendiente: 0, perdido: 0, cancelado: 0, total: 0, hasActividadEnRango: false };
       grupos[key].ots.push(ot);
       grupos[key].total++;
-      if (ot.estado === "EN PROCESO") grupos[key].enProceso++;
-      else if (ot.estado === "FINALIZADO") grupos[key].finalizado++;
-      else if (ot.estado === "PENDIENTE") grupos[key].pendiente++;
+      const estado = (ot.estado || "").toUpperCase();
+      if (estado === "EN PROCESO") grupos[key].enProceso++;
+      else if (estado === "FINALIZADO") grupos[key].finalizado++;
+      else if (estado === "PENDIENTE") grupos[key].pendiente++;
+      else if (estado === "PERDIDO") grupos[key].perdido++;
+      else if (estado === "CANCELADO") grupos[key].cancelado++;
     }
 
     const otsRealizandoseBySede: Record<string, Set<string>> = {};
@@ -228,6 +226,33 @@ export function MapaMinas() {
   const minasParaMapa = useMemo(() => {
     return minasFiltradasLista.filter(g => g.coord.visible !== false);
   }, [minasFiltradasLista]);
+
+  // FIX: Agrupar sedes por coordenadas cercanas (mismo punto o muy juntas)
+  const gruposCercanos = useMemo(() => {
+    const grupos: MinaAgrupada[][] = [];
+    const umbral = 0.05; // grados de diferencia mínima para considerar "separadas"
+
+    for (const mina of minasParaMapa) {
+      let agregada = false;
+      for (const grupo of grupos) {
+        // Comparar con la primera del grupo
+        const primera = grupo[0];
+        const dist = Math.sqrt(
+          Math.pow(mina.coord.lat - primera.coord.lat, 2) +
+          Math.pow(mina.coord.lng - primera.coord.lng, 2)
+        );
+        if (dist < umbral) {
+          grupo.push(mina);
+          agregada = true;
+          break;
+        }
+      }
+      if (!agregada) {
+        grupos.push([mina]);
+      }
+    }
+    return grupos;
+  }, [minasParaMapa]);
 
   const getTecnicosEnMina = (mina: MinaAgrupada): TecnicoViaje[] => {
     const entriesByTecnico: Record<string, { fecha: string; actividad: string; ots: string[] }[]> = {};
@@ -290,18 +315,15 @@ export function MapaMinas() {
     return viajes.sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
-  // FIX: toggle visible ahora usa el store (sincronizado)
   const handleToggleVisibleSede = async (nombre: string) => {
     const sede = todasLasSedes.find(s => s.nombre === nombre);
     if (!sede) return;
     const isVisible = sede.visible ?? true;
-    // Llama al store action que actualiza Excel + recarga store
     const { toggleSedeVisible } = useStore.getState();
     await toggleSedeVisible(nombre, !isVisible);
     showToast(`Sede ${!isVisible ? 'visible' : 'oculta'}`, "ok");
   };
 
-  // FIX: añadir sede desde el panel flotante
   const handleAgregarSede = async () => {
     if (!nuevaSede.nombre || !nuevaSede.lat || !nuevaSede.lng) {
       showToast("Nombre, lat y lng son obligatorios", "error");
@@ -321,7 +343,6 @@ export function MapaMinas() {
     }
   };
 
-  // FIX: eliminar sede desde el panel flotante
   const handleEliminarSede = async (nombre: string) => {
     if (!confirm(`¿Eliminar la sede ${nombre} del Excel y del mapa?`)) return;
     await eliminarSede(nombre);
@@ -335,29 +356,80 @@ export function MapaMinas() {
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
+  // FIX: Renderizar marcadores con agrupación de sedes superpuestas
   useEffect(() => {
     if (!mapRef.current) return;
     markersRef.current.forEach(m => m.remove());
+    groupMarkersRef.current.forEach(m => m.remove());
     markersRef.current = [];
-    for (const mina of minasParaMapa) {
-      const { coord, enProceso, finalizado, pendiente, total } = mina;
-      let color = "#6b7280";
-      if (total > 0) {
-        if (enProceso > 0 && enProceso >= finalizado) color = "#f59e0b";
-        else if (finalizado > 0) color = "#10b981";
-        else if (pendiente > 0) color = "#3b82f6";
+    groupMarkersRef.current = [];
+
+    const getColor = (g: MinaAgrupada) => {
+      if (g.total === 0) return "#6b7280";
+      if (g.enProceso > 0 && g.enProceso >= g.finalizado) return "#f59e0b";
+      if (g.finalizado > 0) return "#10b981";
+      if (g.pendiente > 0) return "#3b82f6";
+      if (g.perdido > 0) return "#6b7280";
+      if (g.cancelado > 0) return "#9ca3af";
+      return "#6b7280";
+    };
+
+    for (const grupo of gruposCercanos) {
+      if (grupo.length === 1) {
+        // Sede única
+        const mina = grupo[0];
+        const { coord, enProceso, finalizado, pendiente, perdido, cancelado, total } = mina;
+        const color = getColor(mina);
+        const radius = total > 0 ? Math.min(8 + total * 2, 25) : 6;
+        const marker = L.circleMarker([coord.lat, coord.lng], { radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8 }).addTo(mapRef.current!);
+        const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span><span style="color: #6b7280;">⚫ ${perdido}</span><span style="color: #9ca3af;">⊘ ${cancelado}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
+        marker.bindPopup(popupHtml);
+        marker.on("click", () => {
+          setSelectedMina(mina);
+          setOtsAsociadasExpandidas(false);
+        });
+        markersRef.current.push(marker);
+      } else {
+        // FIX: Grupo de sedes superpuestas - mostrar un solo marcador con el número
+        const primera = grupo[0];
+        // Calcular totales agregados
+        const totalOts = grupo.reduce((sum, g) => sum + g.total, 0);
+        const totalEnProceso = grupo.reduce((sum, g) => sum + g.enProceso, 0);
+        const totalFinalizado = grupo.reduce((sum, g) => sum + g.finalizado, 0);
+        const totalPendiente = grupo.reduce((sum, g) => sum + g.pendiente, 0);
+        const totalPerdido = grupo.reduce((sum, g) => sum + g.perdido, 0);
+        const totalCancelado = grupo.reduce((sum, g) => sum + g.cancelado, 0);
+
+        // Color del grupo = el peor estado presente
+        let color = "#6b7280";
+        if (totalEnProceso > 0) color = "#f59e0b";
+        else if (totalFinalizado > 0) color = "#10b981";
+        else if (totalPendiente > 0) color = "#3b82f6";
+
+        const radius = Math.min(12 + totalOts * 2, 30);
+        const marker = L.circleMarker([primera.coord.lat, primera.coord.lng], {
+          radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8
+        }).addTo(mapRef.current!);
+
+        // FIX: Badge con el número de sedes agrupadas
+        const badgeHtml = `<div style="position: absolute; top: -8px; right: -8px; background: #E91E63; color: white; border-radius: 50%; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; border: 2px solid white;">${grupo.length}</div>`;
+        const icon = L.divIcon({
+          html: `<div style="position: relative; width: 0; height: 0;">${badgeHtml}</div>`,
+          className: '',
+          iconSize: [0, 0],
+        });
+        // No podemos adjuntar divIcon a circleMarker directamente, usamos tooltip
+        marker.bindTooltip(`${grupo.length} sedes`, { permanent: false, direction: 'top', offset: L.point(8, -8) });
+
+        const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 200px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">📍 ${grupo.length} sedes en esta ubicación</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">Click para ver el listado</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${totalEnProceso}</span><span style="color: #10b981;">✓ ${totalFinalizado}</span><span style="color: #3b82f6;">⏳ ${totalPendiente}</span><span style="color: #6b7280;">⚫ ${totalPerdido}</span><span style="color: #9ca3af;">⊘ ${totalCancelado}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${totalOts} OT(s)</div></div>`;
+        marker.bindPopup(popupHtml);
+        marker.on("click", () => {
+          setGrupoSeleccionado(grupo);
+        });
+        groupMarkersRef.current.push(marker);
       }
-      const radius = total > 0 ? Math.min(8 + total * 2, 25) : 6;
-      const marker = L.circleMarker([coord.lat, coord.lng], { radius, fillColor: color, color: "#ffffff", weight: 2, opacity: 1, fillOpacity: 0.8 }).addTo(mapRef.current!);
-      const popupHtml = `<div style="font-family: -apple-system, sans-serif; min-width: 180px;"><div style="font-weight: bold; font-size: 13px; color: #1d1d1f; margin-bottom: 4px;">${coord.nombre}</div><div style="font-size: 10px; color: #6e6e73; margin-bottom: 8px;">📍 ${coord.region}</div><div style="display: flex; gap: 8px; font-size: 11px; flex-wrap: wrap;"><span style="color: #f59e0b;">⚡ ${enProceso}</span><span style="color: #10b981;">✓ ${finalizado}</span><span style="color: #3b82f6;">⏳ ${pendiente}</span></div><div style="font-size: 10px; color: #999; margin-top: 6px;">Total: ${total} OT(s)</div></div>`;
-      marker.bindPopup(popupHtml);
-      marker.on("click", () => {
-        setSelectedMina(mina);
-        setOtsAsociadasExpandidas(false);
-      });
-      markersRef.current.push(marker);
     }
-  }, [minasParaMapa]);
+  }, [gruposCercanos]);
 
   const zoomToMina = (mina: MinaAgrupada) => {
     if (!mapRef.current) return;
@@ -377,9 +449,12 @@ export function MapaMinas() {
   };
 
   const getEstadoColor = (estado: string) => {
-    if (estado === "EN PROCESO") return "bg-yellow-100 text-yellow-700";
-    if (estado === "FINALIZADO") return "bg-green-100 text-green-700";
-    if (estado === "PENDIENTE") return "bg-blue-100 text-blue-700";
+    const e = (estado || "").toUpperCase();
+    if (e === "EN PROCESO") return "bg-yellow-100 text-yellow-700";
+    if (e === "FINALIZADO") return "bg-green-100 text-green-700";
+    if (e === "PENDIENTE") return "bg-blue-100 text-blue-700";
+    if (e === "PERDIDO") return "bg-gray-200 text-gray-700";
+    if (e === "CANCELADO") return "bg-gray-100 text-gray-500";
     return "bg-gray-100 text-gray-700";
   };
 
@@ -390,7 +465,6 @@ export function MapaMinas() {
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">🗺️ Mapa de Minas</div>
             <div className="flex gap-1">
-              {/* FIX: botón para abrir panel de gestión de sedes */}
               <button
                 onClick={() => setPanelSedesAbierto(!panelSedesAbierto)}
                 className={`p-1 rounded ${panelSedesAbierto ? "text-[#E91E63] bg-pink-50" : "text-gray-500 hover:text-[#E91E63]"}`}
@@ -441,7 +515,8 @@ export function MapaMinas() {
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>En proceso</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>Finalizado</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>Pendiente</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>Sin OTs</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-500"></span>Perdido</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>Cancelado</span>
           </div>
         </div>
 
@@ -484,7 +559,7 @@ export function MapaMinas() {
           <div ref={containerRef} className="w-full h-full" style={{ minHeight: "400px" }} />
         </div>
 
-        {/* FIX: Panel flotante para gestionar sedes (añadir/eliminar) */}
+        {/* Panel flotante gestionar sedes */}
         {panelSedesAbierto && (
           <div className="absolute top-2 right-2 w-80 bg-white rounded-lg shadow-2xl border border-gray-200 z-[1000] max-h-[calc(100%-2rem)] flex flex-col">
             <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#1d1d1f" }}>
@@ -533,6 +608,41 @@ export function MapaMinas() {
           </div>
         )}
 
+        {/* FIX: Modal para seleccionar sede cuando hay varias agrupadas */}
+        {grupoSeleccionado && (
+          <div className="absolute top-2 right-2 w-80 bg-white rounded-lg shadow-2xl border-2 border-[#E91E63] z-[1001] max-h-[calc(100%-2rem)] flex flex-col">
+            <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between" style={{ backgroundColor: "#E91E63" }}>
+              <div className="text-xs font-bold text-white uppercase">{grupoSeleccionado.length} sedes en esta ubicación</div>
+              <button onClick={() => setGrupoSeleccionado(null)} className="text-white/80 hover:text-white"><X size={14} /></button>
+            </div>
+            <div className="p-2 overflow-y-auto flex-1">
+              <div className="text-[10px] text-gray-500 mb-2">Selecciona una sede para ver detalle:</div>
+              {grupoSeleccionado.map(mina => (
+                <button
+                  key={mina.coord.nombre}
+                  onClick={() => {
+                    setSelectedMina(mina);
+                    setOtsAsociadasExpandidas(false);
+                    setGrupoSeleccionado(null);
+                  }}
+                  className="w-full p-2 text-left border border-gray-200 rounded hover:bg-pink-50 mb-1"
+                >
+                  <div className="text-xs font-bold text-gray-900">{mina.coord.nombre}</div>
+                  <div className="text-[10px] text-gray-500">{mina.coord.region}</div>
+                  <div className="flex gap-2 mt-1 text-[9px]">
+                    <span className="text-yellow-600">⚡ {mina.enProceso}</span>
+                    <span className="text-green-600">✓ {mina.finalizado}</span>
+                    <span className="text-blue-600">⏳ {mina.pendiente}</span>
+                    <span className="text-gray-500">⚫ {mina.perdido}</span>
+                    <span className="text-gray-400">⊘ {mina.cancelado}</span>
+                    <span className="text-gray-600 ml-auto font-bold">Total: {mina.total}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {selectedMina && (
           <div className="h-80 shrink-0 bg-white border-t border-gray-200 flex">
             <div className="flex-1 flex flex-col border-r border-gray-200 min-w-0">
@@ -549,11 +659,13 @@ export function MapaMinas() {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-3">
-                <div className="flex gap-3 mb-3 text-xs">
+                <div className="flex gap-3 mb-3 text-xs flex-wrap">
                   <span className="text-yellow-600">⚡ {selectedMina.enProceso}</span>
                   <span className="text-green-600">✓ {selectedMina.finalizado}</span>
                   <span className="text-blue-600">⏳ {selectedMina.pendiente}</span>
-                  <span className="text-gray-400">Total: {selectedMina.total}</span>
+                  <span className="text-gray-600">⚫ {selectedMina.perdido}</span>
+                  <span className="text-gray-500">⊘ {selectedMina.cancelado}</span>
+                  <span className="text-gray-400 ml-auto">Total: {selectedMina.total}</span>
                 </div>
 
                 {(() => {
