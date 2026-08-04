@@ -1,6 +1,7 @@
 /**
  * Store Zustand para la app VIXORA.
- * FIX: Añadidas acciones de backup. borrarEntradaRango ahora usa deleteEntradasRango (batch).
+ * FIX: Modo Batch. Los cambios se guardan en memoria.
+ * Se escriben al Excel solo cuando el usuario hace clic en "Guardar en Excel".
  */
 "use client";
 
@@ -47,6 +48,7 @@ interface AppState {
   cargando: boolean;
   actualizando: boolean;
   error: string | null;
+  cambiosSinGuardar: boolean; // FIX: Bandera para saber si hay cambios en memoria
 
   vista: VistaCalendario;
   fechaActual: Date;
@@ -92,29 +94,19 @@ interface AppState {
   showToast: (mensaje: string, tipo?: "ok" | "error" | "info") => void;
   login: (password: string) => Promise<boolean>;
   logout: () => Promise<void>;
-  guardarEntrada: (
-    tecnico_id: string,
-    fecha: string,
-    data: { actividad: string; ots_asignadas: string; detalle: string; notas: string; }
-  ) => Promise<boolean>;
-  guardarEntradasRango: (
-    tecnico_id: string,
-    fechaInicio: string,
-    fechaFin: string,
-    data: { actividad: string; ots_asignadas: string; detalle: string; notas: string; }
-  ) => Promise<boolean>;
-  cambiarEstadoRango: (
-    tecnico_id: string,
-    fechaInicio: string,
-    fechaFin: string,
-    nuevaActividad: string
-  ) => Promise<boolean>;
-  borrarEntrada: (tecnico_id: string, fecha: string) => Promise<boolean>;
-  borrarEntradasRango: (tecnico_id: string, fechaInicio: string, fechaFin: string) => Promise<boolean>;
-  toggleTecnico: (tecnico_id: string, activo: boolean) => Promise<boolean>;
+  
+  // Acciones de memoria (instantáneas)
+  guardarEntradaMemoria: (tecnico_id: string, fecha: string, data: { actividad: string; ots_asignadas: string; detalle: string; notas: string; }) => void;
+  borrarEntradaMemoria: (tecnico_id: string, fecha: string) => void;
+  borrarRangoMemoria: (tecnico_id: string, fechaInicio: string, fechaFin: string) => void;
+  pegarEnCeldaMemoria: (tecnico_id: string, fecha: string) => void;
+  duplicarDiaMemoria: () => void;
+  repetirPatronMemoria: (veces: number) => void;
+
+  // Acciones de Excel (Batch)
+  guardarCambiosEnExcel: () => Promise<boolean>;
   regenerarVisual: (year: number, month?: number) => Promise<boolean>;
-  generarBackup: (year: number) => Promise<boolean>;
-  restaurarBackup: (year: number) => Promise<boolean>;
+  
   cambiarEstadoOt: (codigo: string, nuevoEstado: string) => Promise<boolean>;
   agregarOt: (codigo: string, cliente: string, sede: string, estado: string) => Promise<boolean>;
 
@@ -124,9 +116,6 @@ interface AppState {
   limpiarFiltros: () => void;
 
   copiarRango: () => void;
-  pegarEnCelda: (tecnico_id: string, fecha: string) => Promise<boolean>;
-  duplicarDia: () => Promise<boolean>;
-  repetirPatron: (veces: number) => Promise<boolean>;
   setPegarMode: (b: boolean) => void;
   limpiarClipboard: () => void;
 
@@ -192,6 +181,7 @@ export const useStore = create<AppState>((set, get) => ({
   cargando: true,
   actualizando: false,
   error: null,
+  cambiosSinGuardar: false,
 
   vista: "mes",
   fechaActual: new Date(),
@@ -225,6 +215,7 @@ export const useStore = create<AppState>((set, get) => ({
         sedes: d.sedes ?? [],
         modoAcceso: d.modoAcceso,
         cargando: false,
+        cambiosSinGuardar: false,
       });
     } catch (err) {
       set({
@@ -249,6 +240,7 @@ export const useStore = create<AppState>((set, get) => ({
         sedes: d.sedes ?? [],
         modoAcceso: d.modoAcceso,
         actualizando: false,
+        cambiosSinGuardar: false,
       });
     } catch (err) {
       set({ actualizando: false });
@@ -332,203 +324,162 @@ export const useStore = create<AppState>((set, get) => ({
     set({ modoAcceso: "lector" });
   },
 
-  guardarEntrada: async (tecnico_id, fecha, data) => {
-    try {
-      const res = await fetch("/api/cronograma", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tecnico_id, fecha, ...data }),
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      await get().cargarDatosSilencioso();
-      get().showToast("Entrada guardada", "ok");
-      return true;
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al guardar", "error");
-      return false;
-    }
+  // ===== ACCIONES EN MEMORIA (INSTANTÁNEAS) =====
+  guardarEntradaMemoria: (tecnico_id, fecha, data) => {
+    set((s) => {
+      const newCronograma = { ...s.cronograma };
+      const key = `${tecnico_id}|${fecha}`;
+      newCronograma[key] = {
+        id: `mem_${key}`,
+        tecnico_id,
+        fecha,
+        actividad: data.actividad,
+        ots_asignadas: data.ots_asignadas || "—",
+        detalle: data.detalle || "—",
+        notas: data.notas || "",
+        modificado_por: "editor",
+        fecha_modif: new Date().toISOString(),
+      };
+      return { cronograma: newCronograma, cambiosSinGuardar: true };
+    });
+    get().showToast("Asignación guardada en memoria", "ok");
   },
 
-  guardarEntradasRango: async (tecnico_id, fechaInicio, fechaFin, data) => {
-    try {
+  borrarEntradaMemoria: (tecnico_id, fecha) => {
+    set((s) => {
+      const newCronograma = { ...s.cronograma };
+      delete newCronograma[`${tecnico_id}|${fecha}`];
+      return { cronograma: newCronograma, cambiosSinGuardar: true };
+    });
+    get().showToast("Entrada borrada de memoria", "ok");
+  },
+
+  borrarRangoMemoria: (tecnico_id, fechaInicio, fechaFin) => {
+    set((s) => {
+      const newCronograma = { ...s.cronograma };
       const inicio = new Date(fechaInicio + "T00:00:00");
       const fin = new Date(fechaFin + "T00:00:00");
-      const fechas: string[] = [];
       const actual = new Date(inicio);
       while (actual <= fin) {
-        fechas.push(formatFechaISO(actual));
+        const iso = formatFechaISO(actual);
+        delete newCronograma[`${tecnico_id}|${iso}`];
         actual.setDate(actual.getDate() + 1);
       }
-      let ok = true;
-      for (const fecha of fechas) {
-        const res = await fetch("/api/cronograma", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tecnico_id, fecha, ...data }),
-        });
-        const json = await res.json();
-        if (!json.ok) { ok = false; break; }
-      }
-      if (ok) {
-        await get().cargarDatosSilencioso();
-        get().showToast(`Asignado a ${fechas.length} día(s)`, "ok");
-      }
-      return ok;
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al guardar rango", "error");
-      return false;
-    }
+      return { cronograma: newCronograma, cambiosSinGuardar: true };
+    });
+    get().showToast("Rango borrado de memoria", "ok");
   },
 
-  cambiarEstadoRango: async (tecnico_id, fechaInicio, fechaFin, nuevaActividad) => {
-    try {
-      const inicio = new Date(fechaInicio + "T00:00:00");
-      const fin = new Date(fechaFin + "T00:00:00");
-      const fechas: string[] = [];
-      const actual = new Date(inicio);
-      while (actual <= fin) {
-        fechas.push(formatFechaISO(actual));
-        actual.setDate(actual.getDate() + 1);
-      }
-      let ok = true;
-      for (const fecha of fechas) {
-        const existing = get().cronograma[`${tecnico_id}|${fecha}`];
-        const res = await fetch("/api/cronograma", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tecnico_id, fecha,
-            actividad: nuevaActividad,
-            ots_asignadas: existing?.ots_asignadas ?? "—",
-            detalle: existing?.detalle ?? "—",
-            notas: existing?.notas ?? "",
-          }),
-        });
-        const json = await res.json();
-        if (!json.ok) { ok = false; break; }
-      }
-      if (ok) {
-        await get().cargarDatosSilencioso();
-        get().showToast(`Estado cambiado a ${nuevaActividad} en ${fechas.length} día(s)`, "ok");
-      }
-      return ok;
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al cambiar estado del rango", "error");
-      return false;
+  pegarEnCeldaMemoria: (tecnico_id, fecha) => {
+    const { clipboard, cronograma } = get();
+    if (!clipboard) {
+      get().showToast("No hay nada que pegar (usa Ctrl+C primero)", "error");
+      return;
     }
+    set((s) => {
+      const newCronograma = { ...s.cronograma };
+      for (const item of clipboard.entradas) {
+        const nuevaFecha = sumarDiasISO(fecha, item.offset_dias);
+        const key = `${tecnico_id}|${nuevaFecha}`;
+        newCronograma[key] = {
+          ...item.entrada,
+          id: `mem_${key}`,
+          tecnico_id,
+          fecha: nuevaFecha,
+        };
+      }
+      return { cronograma: newCronograma, cambiosSinGuardar: true };
+    });
+    get().showToast(`Pegadas ${clipboard.entradas.length} asignación(es)`, "ok");
   },
 
-  borrarEntrada: async (tecnico_id, fecha) => {
+  duplicarDiaMemoria: () => {
+    const { seleccionRango, cronograma } = get();
+    if (!seleccionRango.inicio || !seleccionRango.tecnico_id) return;
+    const entrada = cronograma[`${seleccionRango.tecnico_id}|${seleccionRango.inicio}`];
+    if (!entrada) return;
+    const nuevaFecha = sumarDiasISO(seleccionRango.inicio, 1);
+    set((s) => {
+      const newCronograma = { ...s.cronograma };
+      const key = `${seleccionRango.tecnico_id}|${nuevaFecha}`;
+      newCronograma[key] = { ...entrada, id: `mem_${key}`, fecha: nuevaFecha };
+      return { cronograma: newCronograma, cambiosSinGuardar: true };
+    });
+    get().showToast(`Duplicado a ${nuevaFecha}`, "ok");
+  },
+
+  repetirPatronMemoria: (veces) => {
+    const { seleccionRango, cronograma } = get();
+    if (!seleccionRango.inicio || !seleccionRango.fin || !seleccionRango.tecnico_id) return;
+    const inicio = new Date(seleccionRango.inicio + "T00:00:00");
+    const fin = new Date(seleccionRango.fin + "T00:00:00");
+    const diasRango = Math.round((fin.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const entradasOriginales: { offset: number; entrada: EntradaCronograma }[] = [];
+    const actual = new Date(inicio);
+    while (actual <= fin) {
+      const iso = formatFechaISO(actual);
+      const entrada = cronograma[`${seleccionRango.tecnico_id}|${iso}`];
+      if (entrada) {
+        const offset = Math.round((actual.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24));
+        entradasOriginales.push({ offset, entrada });
+      }
+      actual.setDate(actual.getDate() + 1);
+    }
+    if (entradasOriginales.length === 0) return;
+    
+    set((s) => {
+      const newCronograma = { ...s.cronograma };
+      for (let v = 1; v <= veces; v++) {
+        for (const item of entradasOriginales) {
+          const nuevaFecha = sumarDiasISO(seleccionRango.inicio, item.offset + v * diasRango);
+          const key = `${seleccionRango.tecnico_id}|${nuevaFecha}`;
+          newCronograma[key] = { ...item.entrada, id: `mem_${key}`, tecnico_id: seleccionRango.tecnico_id!, fecha: nuevaFecha };
+        }
+      }
+      return { cronograma: newCronograma, cambiosSinGuardar: true };
+    });
+    get().showToast(`Patrón repetido ${veces} veces`, "ok");
+  },
+
+  // ===== ACCIONES DE EXCEL (BATCH) =====
+  guardarCambiosEnExcel: async () => {
+    set({ actualizando: true });
     try {
-      const res = await fetch("/api/cronograma/borrar", {
+      const year = get().fechaActual.getFullYear();
+      const res = await fetch("/api/cronograma/backup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tecnico_id, fecha }),
+        body: JSON.stringify({ accion: "generar", year, entradas: Object.values(get().cronograma) }),
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      await get().cargarDatosSilencioso();
-      get().showToast("Entrada borrada", "ok");
+      set({ actualizando: false, cambiosSinGuardar: false });
+      get().showToast("Cambios guardados en Excel Backup", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al borrar", "error");
-      return false;
-    }
-  },
-
-  // FIX: Usar el endpoint de borrar rango (batch)
-  borrarEntradasRango: async (tecnico_id, fechaInicio, fechaFin) => {
-    try {
-      const res = await fetch("/api/cronograma/borrar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accion: "rango", tecnico_id, fechaInicio, fechaFin }),
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      await get().cargarDatosSilencioso();
-      get().showToast(`${json.data.deleted} entrada(s) borrada(s)`, "ok");
-      return true;
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al borrar rango", "error");
-      return false;
-    }
-  },
-
-  toggleTecnico: async (tecnico_id, activo) => {
-    try {
-      const res = await fetch("/api/tecnico/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tecnico_id, activo }),
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      await get().cargarDatosSilencioso();
-      get().showToast(`Técnico ${activo ? "activado" : "desactivado"}`, "ok");
-      return true;
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al cambiar técnico", "error");
+      set({ actualizando: false });
+      get().showToast(err instanceof Error ? err.message : "Error al guardar en Excel", "error");
       return false;
     }
   },
 
   regenerarVisual: async (year, month) => {
+    set({ actualizando: true });
     try {
+      // Enviamos las entradas en memoria para que Visual se base en lo que vemos en pantalla
       const res = await fetch("/api/cronograma/visual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year, month }),
+        body: JSON.stringify({ year, month, entradas: Object.values(get().cronograma) }),
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      const esCompleto = !month;
-      get().showToast(
-        esCompleto
-          ? `Excel visual actualizado (365 días): ${json.data.filas} filas × ${json.data.columnas} columnas`
-          : `Excel visual actualizado: ${json.data.filas} filas × ${json.data.columnas} columnas`,
-        "ok"
-      );
+      set({ actualizando: false });
+      get().showToast(`Excel visual actualizado`, "ok");
       return true;
     } catch (err) {
+      set({ actualizando: false });
       get().showToast(err instanceof Error ? err.message : "Error al regenerar", "error");
-      return false;
-    }
-  },
-
-  // FIX: Nuevas acciones de backup
-  generarBackup: async (year) => {
-    try {
-      const res = await fetch("/api/cronograma/backup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accion: "generar", year }),
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      get().showToast(`Backup generado: ${json.data.filas} filas × ${json.data.columnas} columnas`, "ok");
-      return true;
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al generar backup", "error");
-      return false;
-    }
-  },
-
-  restaurarBackup: async (year) => {
-    try {
-      const res = await fetch("/api/cronograma/backup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accion: "restaurar", year }),
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      await get().cargarDatosSilencioso();
-      get().showToast("Cronograma restaurado desde Backup", "ok");
-      return true;
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al restaurar backup", "error");
       return false;
     }
   },
@@ -546,7 +497,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`OT ${codigo} → ${nuevoEstado}`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al cambiar estado OT", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -564,7 +515,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast(`OT ${codigo} agregada`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al agregar OT", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -601,120 +552,6 @@ export const useStore = create<AppState>((set, get) => ({
     get().showToast(`Copiadas ${entradas.length} asignación(es)`, "ok");
   },
 
-  pegarEnCelda: async (tecnico_id, fecha) => {
-    const { clipboard } = get();
-    if (!clipboard) {
-      get().showToast("No hay nada que pegar (usa Ctrl+C primero)", "error");
-      return false;
-    }
-    let count = 0;
-    for (const item of clipboard.entradas) {
-      const nuevaFecha = sumarDiasISO(fecha, item.offset_dias);
-      const res = await fetch("/api/cronograma", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tecnico_id,
-          fecha: nuevaFecha,
-          actividad: item.entrada.actividad,
-          ots_asignadas: item.entrada.ots_asignadas,
-          detalle: item.entrada.detalle,
-          notas: item.entrada.notas,
-        }),
-      });
-      const json = await res.json();
-      if (json.ok) count++;
-    }
-    await get().cargarDatosSilencioso();
-    get().showToast(`Pegadas ${count} asignación(es)`, "ok");
-    return true;
-  },
-
-  duplicarDia: async () => {
-    const { seleccionRango, cronograma } = get();
-    if (!seleccionRango.inicio || !seleccionRango.tecnico_id) {
-      get().showToast("Selecciona un día primero", "error");
-      return false;
-    }
-    if (seleccionRango.fin && seleccionRango.inicio !== seleccionRango.fin) {
-      get().showToast("Duplicar día requiere seleccionar un solo día", "info");
-      return false;
-    }
-    const entrada = cronograma[`${seleccionRango.tecnico_id}|${seleccionRango.inicio}`];
-    if (!entrada) {
-      get().showToast("El día seleccionado no tiene asignación", "info");
-      return false;
-    }
-    const nuevaFecha = sumarDiasISO(seleccionRango.inicio, 1);
-    const res = await fetch("/api/cronograma", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tecnico_id: seleccionRango.tecnico_id,
-        fecha: nuevaFecha,
-        actividad: entrada.actividad,
-        ots_asignadas: entrada.ots_asignadas,
-        detalle: entrada.detalle,
-        notas: entrada.notas,
-      }),
-    });
-    const json = await res.json();
-    if (json.ok) {
-      await get().cargarDatosSilencioso();
-      get().showToast(`Duplicado a ${nuevaFecha}`, "ok");
-    }
-    return json.ok;
-  },
-
-  repetirPatron: async (veces) => {
-    const { seleccionRango, cronograma } = get();
-    if (!seleccionRango.inicio || !seleccionRango.fin || !seleccionRango.tecnico_id) {
-      get().showToast("Selecciona un rango primero", "error");
-      return false;
-    }
-    const inicio = new Date(seleccionRango.inicio + "T00:00:00");
-    const fin = new Date(seleccionRango.fin + "T00:00:00");
-    const diasRango = Math.round((fin.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    const entradasOriginales: { offset: number; entrada: EntradaCronograma }[] = [];
-    const actual = new Date(inicio);
-    while (actual <= fin) {
-      const iso = formatFechaISO(actual);
-      const entrada = cronograma[`${seleccionRango.tecnico_id}|${iso}`];
-      if (entrada) {
-        const offset = Math.round((actual.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24));
-        entradasOriginales.push({ offset, entrada });
-      }
-      actual.setDate(actual.getDate() + 1);
-    }
-    if (entradasOriginales.length === 0) {
-      get().showToast("El rango no tiene asignaciones", "info");
-      return false;
-    }
-    let count = 0;
-    for (let v = 1; v <= veces; v++) {
-      for (const item of entradasOriginales) {
-        const nuevaFecha = sumarDiasISO(seleccionRango.inicio, item.offset + v * diasRango);
-        const res = await fetch("/api/cronograma", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tecnico_id: seleccionRango.tecnico_id,
-            fecha: nuevaFecha,
-            actividad: item.entrada.actividad,
-            ots_asignadas: item.entrada.ots_asignadas,
-            detalle: item.entrada.detalle,
-            notas: item.entrada.notas,
-          }),
-        });
-        const json = await res.json();
-        if (json.ok) count++;
-      }
-    }
-    await get().cargarDatosSilencioso();
-    get().showToast(`Patrón repetido ${veces} veces (${count} asignaciones)`, "ok");
-    return true;
-  },
-
   setPegarMode: (b) => set({ pegarMode: b }),
   limpiarClipboard: () => set({ clipboard: null, pegarMode: false }),
   setModalExportarAbierto: (b) => set({ modalExportarAbierto: b }),
@@ -727,7 +564,7 @@ export const useStore = create<AppState>((set, get) => ({
       if (!json.ok) throw new Error(json.error);
       set({ habilitaciones: json.data });
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al cargar habilitaciones", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
     }
   },
 
@@ -744,7 +581,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Habilitación agregada", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al agregar habilitación", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -762,7 +599,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Habilitación actualizada", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al actualizar habilitación", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -780,7 +617,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Habilitación eliminada", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al eliminar habilitación", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -798,7 +635,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Sub-documento agregado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al agregar sub-documento", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -816,7 +653,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Sub-documento actualizado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al actualizar sub-documento", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -834,7 +671,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Sub-documento eliminado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al eliminar sub-documento", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -849,10 +686,9 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarHabilitaciones();
-      get().showToast(`Documento ${contabilizar ? "contabilizado" : "excluido"}`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al cambiar contabilización", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -866,10 +702,10 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      get().showToast(`Excel sincronizado (${json.data.count} habilitaciones)`, "ok");
+      get().showToast(`Excel sincronizado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -887,10 +723,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarDatosSilencioso();
-      get().showToast(`Técnico ${t.nombre} agregado`, "ok");
+      get().showToast(`Técnico agregado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al agregar técnico", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -908,7 +744,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Técnico actualizado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al actualizar técnico", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -923,10 +759,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarDatosSilencioso();
-      get().showToast("Técnico marcado como inactivo", "ok");
+      get().showToast("Técnico desactivado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al eliminar técnico", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -944,7 +780,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Técnico reactivado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al reactivar técnico", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -958,10 +794,10 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      get().showToast(`Excel sincronizado (${json.data.count} técnicos)`, "ok");
+      get().showToast(`Excel sincronizado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -977,10 +813,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarDatosSilencioso();
-      get().showToast(`Sede ${s.nombre} agregada`, "ok");
+      get().showToast(`Sede agregada`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al agregar sede", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -998,7 +834,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Sede actualizada", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al actualizar sede", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1013,10 +849,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarDatosSilencioso();
-      get().showToast(`Sede ${nombre} eliminada del Excel y del mapa`, "ok");
+      get().showToast(`Sede eliminada`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al eliminar sede", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1047,15 +883,15 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      get().showToast(`Excel sincronizado (${json.data.count} sedes)`, "ok");
+      get().showToast(`Excel sincronizado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
 
-  // ===== Presets de Sedes =====
+  // ===== Presets =====
   cargarPresets: async () => {
     try {
       const res = await fetch("/api/presets", { cache: "no-store" });
@@ -1063,7 +899,7 @@ export const useStore = create<AppState>((set, get) => ({
       if (!json.ok) throw new Error(json.error);
       set({ presets: json.data });
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al cargar presets", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
     }
   },
 
@@ -1077,10 +913,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarPresets();
-      get().showToast(`Preset para ${sedeNombre} creado`, "ok");
+      get().showToast(`Preset creado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al crear preset", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1098,7 +934,7 @@ export const useStore = create<AppState>((set, get) => ({
       get().showToast("Preset eliminado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al eliminar preset", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1113,10 +949,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarPresets();
-      get().showToast("Documento agregado al preset", "ok");
+      get().showToast("Documento agregado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al agregar documento al preset", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1131,10 +967,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarPresets();
-      get().showToast("Documento eliminado del preset", "ok");
+      get().showToast("Documento eliminado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al eliminar documento del preset", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1149,10 +985,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarPresets();
-      get().showToast("Sub-documento agregado al preset", "ok");
+      get().showToast("Sub-doc agregado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al agregar sub-doc al preset", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1167,10 +1003,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarPresets();
-      get().showToast("Sub-documento eliminado del preset", "ok");
+      get().showToast("Sub-doc eliminado", "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al eliminar sub-doc del preset", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1185,10 +1021,10 @@ export const useStore = create<AppState>((set, get) => ({
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
       await get().cargarHabilitaciones();
-      get().showToast(`Preset aplicado (${json.data.creadas} documentos creados)`, "ok");
+      get().showToast(`Preset aplicado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al aplicar preset", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
@@ -1202,10 +1038,10 @@ export const useStore = create<AppState>((set, get) => ({
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error);
-      get().showToast(`Excel sincronizado (${json.data.count} presets)`, "ok");
+      get().showToast(`Excel sincronizado`, "ok");
       return true;
     } catch (err) {
-      get().showToast(err instanceof Error ? err.message : "Error al sincronizar Excel", "error");
+      get().showToast(err instanceof Error ? err.message : "Error", "error");
       return false;
     }
   },
