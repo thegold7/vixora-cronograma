@@ -1,7 +1,6 @@
 /**
  * Store Zustand para la app VIXORA.
- * FIX: Modo Batch. Los cambios se guardan en memoria.
- * Se escriben al Excel solo cuando el usuario hace clic en "Guardar en Excel".
+ * FIX: Añadidos wrappers para compatibilidad con componentes antiguos.
  */
 "use client";
 
@@ -48,7 +47,7 @@ interface AppState {
   cargando: boolean;
   actualizando: boolean;
   error: string | null;
-  cambiosSinGuardar: boolean; // FIX: Bandera para saber si hay cambios en memoria
+  cambiosSinGuardar: boolean;
 
   vista: VistaCalendario;
   fechaActual: Date;
@@ -102,6 +101,16 @@ interface AppState {
   pegarEnCeldaMemoria: (tecnico_id: string, fecha: string) => void;
   duplicarDiaMemoria: () => void;
   repetirPatronMemoria: (veces: number) => void;
+
+  // Wrappers de compatibilidad (async, para componentes antiguos)
+  guardarEntrada: (tecnico_id: string, fecha: string, data: { actividad: string; ots_asignadas: string; detalle: string; notas: string; }) => Promise<boolean>;
+  borrarEntrada: (tecnico_id: string, fecha: string) => Promise<boolean>;
+  borrarEntradasRango: (tecnico_id: string, fechaInicio: string, fechaFin: string) => Promise<boolean>;
+  pegarEnCelda: (tecnico_id: string, fecha: string) => Promise<boolean>;
+  duplicarDia: () => Promise<boolean>;
+  repetirPatron: (veces: number) => Promise<boolean>;
+  guardarEntradasRango: (tecnico_id: string, fechaInicio: string, fechaFin: string, data: { actividad: string; ots_asignadas: string; detalle: string; notas: string; }) => Promise<boolean>;
+  cambiarEstadoRango: (tecnico_id: string, fechaInicio: string, fechaFin: string, nuevaActividad: string) => Promise<boolean>;
 
   // Acciones de Excel (Batch)
   guardarCambiosEnExcel: () => Promise<boolean>;
@@ -342,7 +351,6 @@ export const useStore = create<AppState>((set, get) => ({
       };
       return { cronograma: newCronograma, cambiosSinGuardar: true };
     });
-    get().showToast("Asignación guardada en memoria", "ok");
   },
 
   borrarEntradaMemoria: (tecnico_id, fecha) => {
@@ -351,7 +359,6 @@ export const useStore = create<AppState>((set, get) => ({
       delete newCronograma[`${tecnico_id}|${fecha}`];
       return { cronograma: newCronograma, cambiosSinGuardar: true };
     });
-    get().showToast("Entrada borrada de memoria", "ok");
   },
 
   borrarRangoMemoria: (tecnico_id, fechaInicio, fechaFin) => {
@@ -367,15 +374,11 @@ export const useStore = create<AppState>((set, get) => ({
       }
       return { cronograma: newCronograma, cambiosSinGuardar: true };
     });
-    get().showToast("Rango borrado de memoria", "ok");
   },
 
   pegarEnCeldaMemoria: (tecnico_id, fecha) => {
-    const { clipboard, cronograma } = get();
-    if (!clipboard) {
-      get().showToast("No hay nada que pegar (usa Ctrl+C primero)", "error");
-      return;
-    }
+    const { clipboard } = get();
+    if (!clipboard) return;
     set((s) => {
       const newCronograma = { ...s.cronograma };
       for (const item of clipboard.entradas) {
@@ -390,7 +393,6 @@ export const useStore = create<AppState>((set, get) => ({
       }
       return { cronograma: newCronograma, cambiosSinGuardar: true };
     });
-    get().showToast(`Pegadas ${clipboard.entradas.length} asignación(es)`, "ok");
   },
 
   duplicarDiaMemoria: () => {
@@ -405,7 +407,6 @@ export const useStore = create<AppState>((set, get) => ({
       newCronograma[key] = { ...entrada, id: `mem_${key}`, fecha: nuevaFecha };
       return { cronograma: newCronograma, cambiosSinGuardar: true };
     });
-    get().showToast(`Duplicado a ${nuevaFecha}`, "ok");
   },
 
   repetirPatronMemoria: (veces) => {
@@ -438,7 +439,70 @@ export const useStore = create<AppState>((set, get) => ({
       }
       return { cronograma: newCronograma, cambiosSinGuardar: true };
     });
-    get().showToast(`Patrón repetido ${veces} veces`, "ok");
+  },
+
+  // ===== WRAPPERS DE COMPATIBILIDAD =====
+  guardarEntrada: async (tecnico_id, fecha, data) => {
+    get().guardarEntradaMemoria(tecnico_id, fecha, data);
+    get().showToast("Asignación guardada en memoria", "ok");
+    return true;
+  },
+  borrarEntrada: async (tecnico_id, fecha) => {
+    get().borrarEntradaMemoria(tecnico_id, fecha);
+    get().showToast("Entrada borrada de memoria", "ok");
+    return true;
+  },
+  borrarEntradasRango: async (tecnico_id, fechaInicio, fechaFin) => {
+    get().borrarRangoMemoria(tecnico_id, fechaInicio, fechaFin);
+    get().showToast("Rango borrado de memoria", "ok");
+    return true;
+  },
+  pegarEnCelda: async (tecnico_id, fecha) => {
+    get().pegarEnCeldaMemoria(tecnico_id, fecha);
+    get().showToast("Pegado en memoria", "ok");
+    return true;
+  },
+  duplicarDia: async () => {
+    get().duplicarDiaMemoria();
+    get().showToast("Duplicado en memoria", "ok");
+    return true;
+  },
+  repetirPatron: async (veces) => {
+    get().repetirPatronMemoria(veces);
+    get().showToast(`Patrón repetido en memoria`, "ok");
+    return true;
+  },
+  guardarEntradasRango: async (tecnico_id, fechaInicio, fechaFin, data) => {
+    const inicio = new Date(fechaInicio + "T00:00:00");
+    const fin = new Date(fechaFin + "T00:00:00");
+    const actual = new Date(inicio);
+    while (actual <= fin) {
+      const iso = formatFechaISO(actual);
+      get().guardarEntradaMemoria(tecnico_id, iso, data);
+      actual.setDate(actual.getDate() + 1);
+    }
+    get().showToast("Rango asignado en memoria", "ok");
+    return true;
+  },
+  cambiarEstadoRango: async (tecnico_id, fechaInicio, fechaFin, nuevaActividad) => {
+    const inicio = new Date(fechaInicio + "T00:00:00");
+    const fin = new Date(fechaFin + "T00:00:00");
+    const actual = new Date(inicio);
+    while (actual <= fin) {
+      const iso = formatFechaISO(actual);
+      const existing = get().cronograma[`${tecnico_id}|${iso}`];
+      if (existing) {
+        get().guardarEntradaMemoria(tecnico_id, iso, {
+          actividad: nuevaActividad,
+          ots_asignadas: existing.ots_asignadas,
+          detalle: existing.detalle,
+          notas: existing.notas,
+        });
+      }
+      actual.setDate(actual.getDate() + 1);
+    }
+    get().showToast("Estado cambiado en memoria", "ok");
+    return true;
   },
 
   // ===== ACCIONES DE EXCEL (BATCH) =====
@@ -466,7 +530,6 @@ export const useStore = create<AppState>((set, get) => ({
   regenerarVisual: async (year, month) => {
     set({ actualizando: true });
     try {
-      // Enviamos las entradas en memoria para que Visual se base en lo que vemos en pantalla
       const res = await fetch("/api/cronograma/visual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
