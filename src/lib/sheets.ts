@@ -1,7 +1,6 @@
 /**
  * Cliente de Google Sheets para VIXORA Cronograma.
- * FIX: Cronograma_Backup es ahora la única fuente de verdad (matriz rica).
- * Cada edición toca UNA sola celda — imposible borrar todo por error.
+ * FIX: Auto-inicializa la matriz Cronograma_Backup si está vacía.
  */
 import { google, type sheets_v4 } from "googleapis";
 import type {
@@ -196,19 +195,6 @@ export async function getActividades(): Promise<Actividad[]> {
 // ============================================================
 // CRONOGRAMA - LECTURA DESDE Cronograma_Backup (matriz)
 // ============================================================
-// Estructura de la hoja Cronograma_Backup:
-//   Fila 1: MES | Nombre | Cargo | ENERO 2026 | ... | DICIEMBRE 2026
-//   Fila 2: ID | Nombre | Cargo | 01/1 - Lunes | 02/1 - Martes | ...
-//   Filas 3+: una por técnico. Col A = ID, Col B = Nombre, Col C = Cargo, Col D+ = días
-//
-// Contenido de cada celda (formato rico):
-//   ASIGNACIÓN: PROYECTO MC
-//   OT: 621237
-//   DETALLE: Instalación antifatiga
-//   OT: 621236
-//   DETALLE: Calibración
-//   NOTAS: Sin EPP
-
 function formatCellContent(e: { actividad: string; ots_asignadas: string; detalle: string; notas: string }): string {
   let content = `ASIGNACIÓN: ${e.actividad}`;
   if (e.ots_asignadas && e.ots_asignadas !== "—") {
@@ -259,7 +245,6 @@ function parseCellContent(text: string): { actividad: string; ots_asignadas: str
   return { actividad, ots_asignadas, detalle, notas };
 }
 
-// Helper: convertir número de columna a letra (A, B, ..., Z, AA, AB, ...)
 function colToLetter(col: number): string {
   let letter = "";
   while (col > 0) {
@@ -270,21 +255,16 @@ function colToLetter(col: number): string {
   return letter;
 }
 
-// Helper: obtener el número de columna (1-indexed) para una fecha en la matriz
 function getColumnForDate(fecha: string): number {
-  // fecha = "YYYY-MM-DD"
   const [y, m, d] = fecha.split("-").map(Number);
-  // Col 1 = ID, Col 2 = Nombre, Col 3 = Cargo
-  // Col 4 = día 1 de enero
   let dayOfYear = 0;
   for (let mes = 1; mes < m; mes++) {
     dayOfYear += new Date(y, mes, 0).getDate();
   }
   dayOfYear += d;
-  return 3 + dayOfYear; // 3 header cols + dayOfYear
+  return 3 + dayOfYear;
 }
 
-// Helper: obtener la fila (1-indexed en la hoja) para un técnico por ID
 async function getRowForTecnico(tecnicoId: string): Promise<number> {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
@@ -294,7 +274,7 @@ async function getRowForTecnico(tecnicoId: string): Promise<number> {
   const rows = (res.data.values ?? []) as string[][];
   for (let i = 0; i < rows.length; i++) {
     if ((rows[i][0] ?? "").trim() === tecnicoId) {
-      return i + 2; // +1 por header (fila 1+2), +1 por index 0
+      return i + 2;
     }
   }
   return -1;
@@ -314,16 +294,15 @@ export async function getCronograma(): Promise<EntradaCronograma[]> {
     for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
       const row = rows[rowIdx];
       const tecnico_id = (row[0] ?? "").trim();
-      if (!tecnico_id) continue;
+      // Saltar filas de header (ID) o vacías
+      if (!tecnico_id || tecnico_id === "ID") continue;
       
-      // Cada columna desde la 4 (index 3) es un día
       for (let colIdx = 3; colIdx < row.length; colIdx++) {
         const cellText = row[colIdx] ?? "";
         const parsed = parseCellContent(cellText);
         if (!parsed) continue;
         
-        // Reconstruir la fecha: colIdx 3 = día 1 del año
-        const dayOfYear = colIdx - 3 + 1; // colIdx 3 → day 1
+        const dayOfYear = colIdx - 3 + 1;
         const date = new Date(year, 0, dayOfYear);
         const fecha = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
         
@@ -356,34 +335,57 @@ export async function getCronogramaMap(): Promise<Record<string, EntradaCronogra
   return map;
 }
 
-// ============================================================
-// CRONOGRAMA - UPDERT (escribe UNA sola celda)
-// ============================================================
+// FIX: Asegurar que la matriz existe antes de escribir
+async function ensureCronogramaBackupInitialized(year: number): Promise<void> {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: "Cronograma_Backup!A1:C2",
+  });
+  const rows = (res.data.values ?? []) as string[][];
+  
+  const hasHeaders = rows.length >= 2 && rows[0][0] === "MES" && rows[1][0] === "ID";
+  if (hasHeaders) return;
+  
+  // Si no hay headers, generar todo el backup
+  await generarCronogramaBackup(year);
+}
+
 export async function upsertEntradaCronograma(
   params: { tecnico_id: string; fecha: string; actividad: string; ots_asignadas: string; detalle: string; notas: string; modificado_por: string; }
 ): Promise<{ ok: true; id: string }> {
   const sheets = getClient();
+  
+  // FIX: Inicializar la hoja si está vacía
+  const year = new Date(params.fecha + "T00:00:00").getFullYear();
+  await ensureCronogramaBackupInitialized(year);
+  
   const colNum = getColumnForDate(params.fecha);
   const colLetter = colToLetter(colNum);
   let rowNum = await getRowForTecnico(params.tecnico_id);
   
-  // Si el técnico no existe en la matriz, añadirlo
+  // Si el técnico no existe en la matriz, añadirlo al final
   if (rowNum < 0) {
     const tecnicos = await getTecnicos();
     const tec = tecnicos.find(t => t.id === params.tecnico_id);
     if (!tec) throw new Error(`Técnico ${params.tecnico_id} no encontrado`);
-    await sheets.spreadsheets.values.append({
+    
+    const res = await sheets.spreadsheets.values.get({
       spreadsheetId: getSheetId(),
-      range: "Cronograma_Backup!A:C",
+      range: "Cronograma_Backup!A:A",
+    });
+    const allRows = (res.data.values ?? []) as string[][];
+    const lastRow = allRows.length + 1;
+    
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: getSheetId(),
+      range: `Cronograma_Backup!A${lastRow}:C${lastRow}`,
       valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
       requestBody: { values: [[tec.id, tec.nombre, tec.cargo]] },
     });
-    rowNum = await getRowForTecnico(params.tecnico_id);
-    if (rowNum < 0) throw new Error(`No se pudo agregar fila para técnico ${params.tecnico_id}`);
+    rowNum = lastRow;
   }
   
-  // FIX: Solo actualizar UNA celda. Imposible borrar otras.
   const cellContent = formatCellContent({
     actividad: params.actividad,
     ots_asignadas: params.ots_asignadas || "—",
@@ -401,15 +403,16 @@ export async function upsertEntradaCronograma(
   return { ok: true, id: `${params.tecnico_id}_${params.fecha}` };
 }
 
-// ============================================================
-// CRONOGRAMA - ELIMINAR (limpia UNA sola celda)
-// ============================================================
 export async function deleteEntradaCronograma(tecnico_id: string, fecha: string): Promise<{ ok: true }> {
   const sheets = getClient();
+  
+  const year = new Date(fecha + "T00:00:00").getFullYear();
+  await ensureCronogramaBackupInitialized(year);
+  
   const colNum = getColumnForDate(fecha);
   const colLetter = colToLetter(colNum);
   const rowNum = await getRowForTecnico(tecnico_id);
-  if (rowNum < 0) return { ok: true }; // no existe, nada que borrar
+  if (rowNum < 0) return { ok: true };
   
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
@@ -418,12 +421,17 @@ export async function deleteEntradaCronograma(tecnico_id: string, fecha: string)
   return { ok: true };
 }
 
-// FIX: Eliminar múltiples entradas en batch (una API call)
 export async function deleteEntradasRango(tecnico_id: string, fechas: string[]): Promise<{ ok: true; deleted: number }> {
   const sheets = getClient();
   if (fechas.length > 100) {
     throw new Error(`Se intentó borrar ${fechas.length} entradas. Máximo: 100. Selecciona un rango más pequeño.`);
   }
+  
+  if (fechas.length > 0) {
+    const year = new Date(fechas[0] + "T00:00:00").getFullYear();
+    await ensureCronogramaBackupInitialized(year);
+  }
+  
   const rowNum = await getRowForTecnico(tecnico_id);
   if (rowNum < 0) return { ok: true, deleted: 0 };
   
@@ -439,9 +447,6 @@ export async function deleteEntradasRango(tecnico_id: string, fechas: string[]):
   return { ok: true, deleted: fechas.length };
 }
 
-// ============================================================
-// CRONOGRAMA - GENERAR BACKUP COMPLETO (sobreescribe toda la hoja)
-// ============================================================
 export async function generarCronogramaBackup(year: number): Promise<{ ok: true; filas: number; columnas: number }> {
   const sheets = getClient();
   const tecnicos = await getTecnicos();
@@ -449,7 +454,6 @@ export async function generarCronogramaBackup(year: number): Promise<{ ok: true;
   const otMap: Record<string, OT> = {};
   for (const o of ots) otMap[o.codigo] = o;
   
-  // Leer cronograma actual (desde la misma hoja, antes de sobreescribir)
   const entriesMap = await getCronogramaMap();
   
   const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
@@ -494,7 +498,6 @@ export async function generarCronogramaBackup(year: number): Promise<{ ok: true;
   
   const totalColumnas = 3 + 365;
   
-  // Limpiar y sobreescribir toda la hoja
   await sheets.spreadsheets.values.clear({
     spreadsheetId: getSheetId(),
     range: "Cronograma_Backup!A1:ZZZ",
@@ -511,9 +514,6 @@ export async function generarCronogramaBackup(year: number): Promise<{ ok: true;
   return { ok: true, filas: rows.length, columnas: totalColumnas };
 }
 
-// ============================================================
-// CRONOGRAMA_VISUAL (formato simple, solo lectura humana)
-// ============================================================
 export async function regenerarCronogramaVisual(year: number, month?: number): Promise<{ ok: true; filas: number; columnas: number }> {
   const sheets = getClient();
   const tecnicos = (await getTecnicos()).filter((t) => t.activo);
