@@ -1,15 +1,11 @@
 /**
  * POST /api/cronograma/visual
- * Regenera la hoja Cronograma_Visual (matriz 365 días) desde _Cronograma_Datos.
- * Solo accesible en modo editor.
- *
- * Body: { year: number, month?: number }
- *   - Si month viene, regenera solo ese mes (más rápido).
- *   - Si no, regenera todo el año.
+ * Regenera Cronograma_Visual. FIX: ahora usa las entradas enviadas desde la memoria.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { regenerarCronogramaVisual } from "@/lib/sheets";
 import { isEditor } from "@/lib/auth";
+import type { EntradaCronograma } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -22,20 +18,24 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
-    const { year, month } = body;
-    if (!year || typeof year !== "number") {
-      return NextResponse.json(
-        { ok: false, error: "Falta year (number)" },
-        { status: 400 }
-      );
-    }
-    const result = await regenerarCronogramaVisual(
-      year,
-      typeof month === "number" ? month : undefined
-    );
-    return NextResponse.json({ ok: true, data: result });
+    const { year, month, entradas } = body;
+    
+    const y = parseInt(year, 10);
+    const m = month ? parseInt(month, 10) : undefined;
+    const entradasArray = (entradas || []) as EntradaCronograma[];
+
+    const result = await regenerarCronogramaVisual(y, m, entradasArray);
+    
+    return NextResponse.json({
+      ok: true,
+      data: {
+        filas: result.filas,
+        columnas: result.columnas,
+        mensaje: `Visual actualizado: ${result.filas} filas × ${result.columnas} columnas`,
+      },
+    });
   } catch (err) {
-    console.error("[/api/cronograma/visual] error:", err);
+    console.error("[/api/cronograma/visual POST] error:", err);
     return NextResponse.json(
       { ok: false, error: err instanceof Error ? err.message : "Unknown error" },
       { status: 500 }
