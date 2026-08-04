@@ -1,5 +1,6 @@
 /**
  * Store Zustand para la app VIXORA.
+ * FIX: Añadidas acciones de backup. borrarEntradaRango ahora usa deleteEntradasRango (batch).
  */
 "use client";
 
@@ -109,8 +110,11 @@ interface AppState {
     nuevaActividad: string
   ) => Promise<boolean>;
   borrarEntrada: (tecnico_id: string, fecha: string) => Promise<boolean>;
+  borrarEntradasRango: (tecnico_id: string, fechaInicio: string, fechaFin: string) => Promise<boolean>;
   toggleTecnico: (tecnico_id: string, activo: boolean) => Promise<boolean>;
   regenerarVisual: (year: number, month?: number) => Promise<boolean>;
+  generarBackup: (year: number) => Promise<boolean>;
+  restaurarBackup: (year: number) => Promise<boolean>;
   cambiarEstadoOt: (codigo: string, nuevoEstado: string) => Promise<boolean>;
   agregarOt: (codigo: string, cliente: string, sede: string, estado: string) => Promise<boolean>;
 
@@ -433,6 +437,25 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  // FIX: Usar el endpoint de borrar rango (batch)
+  borrarEntradasRango: async (tecnico_id, fechaInicio, fechaFin) => {
+    try {
+      const res = await fetch("/api/cronograma/borrar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "rango", tecnico_id, fechaInicio, fechaFin }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast(`${json.data.deleted} entrada(s) borrada(s)`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al borrar rango", "error");
+      return false;
+    }
+  },
+
   toggleTecnico: async (tecnico_id, activo) => {
     try {
       const res = await fetch("/api/tecnico/toggle", {
@@ -470,6 +493,42 @@ export const useStore = create<AppState>((set, get) => ({
       return true;
     } catch (err) {
       get().showToast(err instanceof Error ? err.message : "Error al regenerar", "error");
+      return false;
+    }
+  },
+
+  // FIX: Nuevas acciones de backup
+  generarBackup: async (year) => {
+    try {
+      const res = await fetch("/api/cronograma/backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "generar", year }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      get().showToast(`Backup generado: ${json.data.filas} filas × ${json.data.columnas} columnas`, "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al generar backup", "error");
+      return false;
+    }
+  },
+
+  restaurarBackup: async (year) => {
+    try {
+      const res = await fetch("/api/cronograma/backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "restaurar", year }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      await get().cargarDatosSilencioso();
+      get().showToast("Cronograma restaurado desde Backup", "ok");
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : "Error al restaurar backup", "error");
       return false;
     }
   },
