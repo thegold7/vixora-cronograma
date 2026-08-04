@@ -1,17 +1,11 @@
 /**
  * POST /api/cronograma/backup
- * Acciones:
- *   - { accion: "generar", year } → sobreescribe Cronograma_Backup con el año completo
- *   - { accion: "restaurar", year } → lee Cronograma_Backup y regenera Cronograma_Visual (los datos ya viven en Backup)
- *
- * Nota: Como Cronograma_Backup es ahora la fuente de verdad, "restaurar" simplemente
- * fuerza una recarga de datos desde Backup (que getCronograma ya hace automáticamente).
- * Este endpoint existe principalmente para forzar la regeneración de Visual y limpiar
- * estado inconsistente.
+ * FIX: Ahora usa las entradas enviadas desde la página (memoria) en vez de leer del Excel.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { generarCronogramaBackup, regenerarCronogramaVisual } from "@/lib/sheets";
 import { isEditor } from "@/lib/auth";
+import type { EntradaCronograma } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -24,11 +18,13 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
-    const { accion } = body;
+    const { accion, entradas } = body;
     const year = body.year ? parseInt(body.year, 10) : new Date().getFullYear();
 
     if (accion === "generar") {
-      const result = await generarCronogramaBackup(year);
+      // FIX: Pasar las entradas de memoria a generarCronogramaBackup
+      const entradasArray = (entradas || []) as EntradaCronograma[];
+      const result = await generarCronogramaBackup(year, entradasArray);
       return NextResponse.json({
         ok: true,
         data: {
@@ -40,15 +36,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (accion === "restaurar") {
-      // Como Backup ya es la fuente de verdad, "restaurar" regenera Visual
-      // para asegurar consistencia. La data del cronograma se lee de Backup automáticamente.
       const result = await regenerarCronogramaVisual(year);
       return NextResponse.json({
         ok: true,
         data: {
           filas: result.filas,
           columnas: result.columnas,
-          mensaje: `Cronograma restaurado desde Backup. Visual regenerado: ${result.filas} filas × ${result.columnas} columnas`,
+          mensaje: `Cronograma restaurado. Visual regenerado: ${result.filas} filas × ${result.columnas} columnas`,
         },
       });
     }
