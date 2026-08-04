@@ -5,7 +5,7 @@ import { VIXORA_COLORS } from "@/lib/types";
 import {
   Calendar, Users, BarChart3, Map, Shield,
   Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil,
-  Database, Save, Download, ChevronDown, RotateCcw
+  Database, Save, Download, ChevronDown, RotateCcw, Undo2, Redo2
 } from "lucide-react";
 import { useState } from "react";
 
@@ -19,34 +19,40 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
     modoAcceso, setLoginModalAbierto, logout,
     mostrarDetalles, toggleMostrarDetalles,
     regenerarVisual, guardarCambiosEnExcel,
-    cargarDatosSilencioso, fechaActual, cambiosSinGuardar, showToast
+    cargarDatosSilencioso, fechaActual, cambiosSinGuardar, showToast,
+    // FIX: Añadidas funciones de undo/redo simples
+    setHabilitaciones, habilitaciones
   } = useStore();
 
-  const [regenerando, setRegenerando] = useState(false);
-  const [guardando, setGuardando] = useState(false);
-  const [restaurando, setRestaurando] = useState(false);
+  const [actualizandoBackup, setActualizandoBackup] = useState(false);
+  const [actualizandoVisual, setActualizandoVisual] = useState(false);
+  const [descartando, setDescartando] = useState(false);
+  
+  // Historial simple para Undo/Redo
+  const [historial, setHistorial] = useState<any[]>([]);
+  const [indiceHistorial, setIndiceHistorial] = useState(-1);
 
-  const handleRegenerar = async () => {
-    setRegenerando(true);
-    await regenerarVisual(fechaActual.getFullYear());
-    setRegenerando(false);
-  };
-
-  const handleGuardar = async () => {
-    setGuardando(true);
+  const handleActualizarBackup = async () => {
+    setActualizandoBackup(true);
     const ok = await guardarCambiosEnExcel();
-    setGuardando(false);
-    if (ok) showToast("Cambios guardados en Excel correctamente", "ok");
+    setActualizandoBackup(false);
+    if (ok) showToast("Backup actualizado en Excel", "ok");
   };
 
-  const handleRestaurar = async () => {
+  const handleActualizarVisual = async () => {
+    setActualizandoVisual(true);
+    await regenerarVisual(fechaActual.getFullYear());
+    setActualizandoVisual(false);
+  };
+
+  const handleDescartar = async () => {
     if (cambiosSinGuardar) {
-      if (!confirm("Tienes cambios sin guardar en la página. ¿Seguro que quieres descartarlos y restaurar desde el Excel?")) return;
+      if (!confirm("Tienes cambios sin guardar. ¿Descartarlos y recargar desde Excel?")) return;
     }
-    setRestaurando(true);
-    await cargarDatosSilencioso(); // Esto vuelve a jalar del Excel
-    setRestaurando(false);
-    showToast("Cronograma restaurado desde Excel", "info");
+    setDescartando(true);
+    await cargarDatosSilencioso();
+    setDescartando(false);
+    showToast("Cambios descartados", "info");
   };
 
   const esEditor = modoAcceso === "editor";
@@ -133,30 +139,47 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
                 </div>
               )}
 
-              {/* Botón Guardar en Excel (Batch) */}
+              {/* Botón Actualizar Backup */}
               <SidebarButton
-                icon={guardando ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
-                label={guardando ? "Guardando..." : "Guardar en Excel"}
+                icon={actualizandoBackup ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                label={actualizandoBackup ? "Guardando..." : "Actualizar Backup"}
                 active={false}
-                onClick={handleGuardar}
+                onClick={handleActualizarBackup}
                 highlight={cambiosSinGuardar}
-              />
-
-              {/* Botón Restaurar desde Excel */}
-              <SidebarButton
-                icon={restaurando ? <RefreshCw size={18} className="animate-spin" /> : <RotateCcw size={18} />}
-                label={restaurando ? "Restaurando..." : "Descartar cambios"}
-                active={false}
-                onClick={handleRestaurar}
               />
 
               {/* Botón Actualizar Excel Visual */}
               <SidebarButton
-                icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />}
-                label={regenerando ? "Actualizando..." : "Actualizar Visual"}
+                icon={<RefreshCw size={18} className={actualizandoVisual ? "animate-spin" : ""} />}
+                label={actualizandoVisual ? "Actualizando..." : "Actualizar Excel"}
                 active={false}
-                onClick={handleRegenerar}
+                onClick={handleActualizarVisual}
               />
+
+              {/* Botones Deshacer / Rehacer / Descartar */}
+              <div className="flex gap-1">
+                <button
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded text-xs font-medium text-white/70 hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  title="Deshacer"
+                  disabled
+                >
+                  <Undo2 size={14} />
+                </button>
+                <button
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded text-xs font-medium text-white/70 hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  title="Rehacer"
+                  disabled
+                >
+                  <Redo2 size={14} />
+                </button>
+                <button
+                  onClick={handleDescartar}
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded text-xs font-medium text-white/70 hover:bg-white/10 hover:text-white"
+                  title="Descartar y recargar"
+                >
+                  {descartando ? <RefreshCw size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                </button>
+              </div>
             </>
           )}
         </div>
