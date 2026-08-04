@@ -2,7 +2,11 @@
 
 import { useStore } from "@/lib/store";
 import { VIXORA_COLORS } from "@/lib/types";
-import { Calendar, Users, BarChart3, Map, Shield, Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil, Database } from "lucide-react";
+import {
+  Calendar, Users, BarChart3, Map, Shield,
+  Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil,
+  Database, Download, Save, ChevronDown
+} from "lucide-react";
 import { useState } from "react";
 
 interface Props {
@@ -11,16 +15,39 @@ interface Props {
 }
 
 export function SidebarLeft({ onNavigate, seccionActual }: Props) {
-  const { modoAcceso, setLoginModalAbierto, logout, mostrarDetalles, toggleMostrarDetalles, regenerarVisual, fechaActual } = useStore();
+  const {
+    modoAcceso, setLoginModalAbierto, logout,
+    mostrarDetalles, toggleMostrarDetalles,
+    regenerarVisual, generarBackup, restaurarBackup,
+    fechaActual
+  } = useStore();
+
   const [regenerando, setRegenerando] = useState(false);
+  const [generandoBackup, setGenerandoBackup] = useState(false);
+  const [restaurando, setRestaurando] = useState(false);
+  const [menuBackupAbierto, setMenuBackupAbierto] = useState(false);
 
   const handleRegenerar = async () => {
     setRegenerando(true);
-    await regenerarVisual(fechaActual.getFullYear(), fechaActual.getMonth() + 1);
+    await regenerarVisual(fechaActual.getFullYear());
     setRegenerando(false);
   };
 
-  // FIX: Lector solo ve Cronograma y Mapa Minas
+  const handleGenerarBackup = async () => {
+    setGenerandoBackup(true);
+    setMenuBackupAbierto(false);
+    await generarBackup(fechaActual.getFullYear());
+    setGenerandoBackup(false);
+  };
+
+  const handleRestaurarBackup = async () => {
+    setMenuBackupAbierto(false);
+    if (!confirm("¿Restaurar el cronograma desde el Backup? Esto regenerará la hoja Visual con los datos del Backup.")) return;
+    setRestaurando(true);
+    await restaurarBackup(fechaActual.getFullYear());
+    setRestaurando(false);
+  };
+
   const esEditor = modoAcceso === "editor";
 
   return (
@@ -54,7 +81,6 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
           onClick={() => onNavigate("mapa")}
         />
 
-        {/* FIX: Estas opciones solo para editor */}
         {esEditor && (
           <>
             <SidebarButton
@@ -86,7 +112,7 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
         )}
       </nav>
 
-      {/* Acciones rápidas */}
+      {/* Acciones rápidas - solo en Cronograma */}
       {seccionActual === "cronograma" && (
         <div className="p-2 space-y-1 border-t border-white/10">
           <SidebarButton
@@ -95,13 +121,58 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
             active={false}
             onClick={toggleMostrarDetalles}
           />
+
           {esEditor && (
-            <SidebarButton
-              icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />}
-              label={regenerando ? "Actualizando..." : "Actualizar Excel visual"}
-              active={false}
-              onClick={handleRegenerar}
-            />
+            <>
+              {/* Botón Actualizar Excel Visual */}
+              <SidebarButton
+                icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />}
+                label={regenerando ? "Actualizando..." : "Actualizar Excel Visual"}
+                active={false}
+                onClick={handleRegenerar}
+              />
+
+              {/* FIX: Menú desplegable de Backup */}
+              <div className="relative">
+                <SidebarButton
+                  icon={
+                    generandoBackup || restaurando
+                      ? <RefreshCw size={18} className="animate-spin" />
+                      : <Save size={18} />
+                  }
+                  label={
+                    generandoBackup ? "Generando backup..." :
+                    restaurando ? "Restaurando..." :
+                    "Backup"
+                  }
+                  active={false}
+                  onClick={() => setMenuBackupAbierto(!menuBackupAbierto)}
+                  extraIcon={<ChevronDown size={12} className={`transition-transform ${menuBackupAbierto ? "rotate-180" : ""}`} />}
+                />
+
+                {menuBackupAbierto && (
+                  <div className="absolute left-full bottom-0 ml-2 w-48 bg-white rounded-lg shadow-2xl border border-gray-200 z-50 overflow-hidden">
+                    <button
+                      onClick={handleGenerarBackup}
+                      disabled={generandoBackup}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-left"
+                    >
+                      <Save size={12} className="text-[#E91E63]" />
+                      <span>Generar Backup</span>
+                    </button>
+                    <div className="border-t border-gray-100" />
+                    <button
+                      onClick={handleRestaurarBackup}
+                      disabled={restaurando}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-left"
+                    >
+                      <Download size={12} className="text-blue-600" />
+                      <span>Restaurar desde Backup</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -140,12 +211,14 @@ function SidebarButton({
   active,
   onClick,
   highlight,
+  extraIcon,
 }: {
   icon: React.ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
   highlight?: boolean;
+  extraIcon?: React.ReactNode;
 }) {
   return (
     <button
@@ -158,7 +231,8 @@ function SidebarButton({
       title={label}
     >
       <span className="shrink-0">{icon}</span>
-      <span className="hidden lg:block truncate">{label}</span>
+      <span className="hidden lg:block truncate flex-1 text-left">{label}</span>
+      {extraIcon && <span className="hidden lg:block shrink-0">{extraIcon}</span>}
       {highlight && (
         <span className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-[#E91E63] animate-pulse" />
       )}
