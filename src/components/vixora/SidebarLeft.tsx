@@ -5,7 +5,7 @@ import { VIXORA_COLORS } from "@/lib/types";
 import {
   Calendar, Users, BarChart3, Map, Shield,
   Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil,
-  Database, Download, Save, ChevronDown
+  Database, Save, Download, ChevronDown, RotateCcw
 } from "lucide-react";
 import { useState } from "react";
 
@@ -18,14 +18,13 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
   const {
     modoAcceso, setLoginModalAbierto, logout,
     mostrarDetalles, toggleMostrarDetalles,
-    regenerarVisual, generarBackup, restaurarBackup,
-    fechaActual
+    regenerarVisual, guardarCambiosEnExcel,
+    cargarDatosSilencioso, fechaActual, cambiosSinGuardar, showToast
   } = useStore();
 
   const [regenerando, setRegenerando] = useState(false);
-  const [generandoBackup, setGenerandoBackup] = useState(false);
+  const [guardando, setGuardando] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
-  const [menuBackupAbierto, setMenuBackupAbierto] = useState(false);
 
   const handleRegenerar = async () => {
     setRegenerando(true);
@@ -33,19 +32,21 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
     setRegenerando(false);
   };
 
-  const handleGenerarBackup = async () => {
-    setGenerandoBackup(true);
-    setMenuBackupAbierto(false);
-    await generarBackup(fechaActual.getFullYear());
-    setGenerandoBackup(false);
+  const handleGuardar = async () => {
+    setGuardando(true);
+    const ok = await guardarCambiosEnExcel();
+    setGuardando(false);
+    if (ok) showToast("Cambios guardados en Excel correctamente", "ok");
   };
 
-  const handleRestaurarBackup = async () => {
-    setMenuBackupAbierto(false);
-    if (!confirm("¿Restaurar el cronograma desde el Backup? Esto regenerará la hoja Visual con los datos del Backup.")) return;
+  const handleRestaurar = async () => {
+    if (cambiosSinGuardar) {
+      if (!confirm("Tienes cambios sin guardar en la página. ¿Seguro que quieres descartarlos y restaurar desde el Excel?")) return;
+    }
     setRestaurando(true);
-    await restaurarBackup(fechaActual.getFullYear());
+    await cargarDatosSilencioso(); // Esto vuelve a jalar del Excel
     setRestaurando(false);
+    showToast("Cronograma restaurado desde Excel", "info");
   };
 
   const esEditor = modoAcceso === "editor";
@@ -124,54 +125,38 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
 
           {esEditor && (
             <>
+              {/* Indicador de cambios sin guardar */}
+              {cambiosSinGuardar && (
+                <div className="hidden lg:flex items-center gap-2 px-2 py-1 text-[10px] text-yellow-400 bg-yellow-400/10 rounded">
+                  <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></div>
+                  <span>Cambios sin guardar</span>
+                </div>
+              )}
+
+              {/* Botón Guardar en Excel (Batch) */}
+              <SidebarButton
+                icon={guardando ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                label={guardando ? "Guardando..." : "Guardar en Excel"}
+                active={false}
+                onClick={handleGuardar}
+                highlight={cambiosSinGuardar}
+              />
+
+              {/* Botón Restaurar desde Excel */}
+              <SidebarButton
+                icon={restaurando ? <RefreshCw size={18} className="animate-spin" /> : <RotateCcw size={18} />}
+                label={restaurando ? "Restaurando..." : "Descartar cambios"}
+                active={false}
+                onClick={handleRestaurar}
+              />
+
               {/* Botón Actualizar Excel Visual */}
               <SidebarButton
                 icon={<RefreshCw size={18} className={regenerando ? "animate-spin" : ""} />}
-                label={regenerando ? "Actualizando..." : "Actualizar Excel Visual"}
+                label={regenerando ? "Actualizando..." : "Actualizar Visual"}
                 active={false}
                 onClick={handleRegenerar}
               />
-
-              {/* FIX: Menú desplegable de Backup */}
-              <div className="relative">
-                <SidebarButton
-                  icon={
-                    generandoBackup || restaurando
-                      ? <RefreshCw size={18} className="animate-spin" />
-                      : <Save size={18} />
-                  }
-                  label={
-                    generandoBackup ? "Generando backup..." :
-                    restaurando ? "Restaurando..." :
-                    "Backup"
-                  }
-                  active={false}
-                  onClick={() => setMenuBackupAbierto(!menuBackupAbierto)}
-                  extraIcon={<ChevronDown size={12} className={`transition-transform ${menuBackupAbierto ? "rotate-180" : ""}`} />}
-                />
-
-                {menuBackupAbierto && (
-                  <div className="absolute left-full bottom-0 ml-2 w-48 bg-white rounded-lg shadow-2xl border border-gray-200 z-50 overflow-hidden">
-                    <button
-                      onClick={handleGenerarBackup}
-                      disabled={generandoBackup}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-left"
-                    >
-                      <Save size={12} className="text-[#E91E63]" />
-                      <span>Generar Backup</span>
-                    </button>
-                    <div className="border-t border-gray-100" />
-                    <button
-                      onClick={handleRestaurarBackup}
-                      disabled={restaurando}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-left"
-                    >
-                      <Download size={12} className="text-blue-600" />
-                      <span>Restaurar desde Backup</span>
-                    </button>
-                  </div>
-                )}
-              </div>
             </>
           )}
         </div>
@@ -211,14 +196,12 @@ function SidebarButton({
   active,
   onClick,
   highlight,
-  extraIcon,
 }: {
   icon: React.ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
   highlight?: boolean;
-  extraIcon?: React.ReactNode;
 }) {
   return (
     <button
@@ -226,15 +209,16 @@ function SidebarButton({
       className={`w-full flex items-center gap-2 px-2 py-2 rounded text-xs font-medium transition-colors ${
         active
           ? "bg-[#E91E63] text-white"
+          : highlight
+          ? "bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30"
           : "text-white/70 hover:bg-white/10 hover:text-white"
       }`}
       title={label}
     >
       <span className="shrink-0">{icon}</span>
       <span className="hidden lg:block truncate flex-1 text-left">{label}</span>
-      {extraIcon && <span className="hidden lg:block shrink-0">{extraIcon}</span>}
       {highlight && (
-        <span className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-[#E91E63] animate-pulse" />
+        <span className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
       )}
     </button>
   );
