@@ -5,7 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useStore, formatFechaISO } from "@/lib/store";
 import type { OT, Tecnico, Sede, EntradaCronograma } from "@/lib/types";
-import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp, Plus, Trash2, Settings, Hash } from "lucide-react";
+import { Search, X, Calendar, Info, RefreshCw, Check, Eye, EyeOff, ChevronDown, ChevronUp, Plus, Trash2, Settings, Save, Hash } from "lucide-react";
 
 const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
   "PROYECTO MC": "MARCOBRE",
@@ -313,6 +313,35 @@ export function MapaMinas() {
     return viajes.sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
+  // FIX: Función rápida para contar técnicos en una sede para la lista del sidebar
+  const contarTecnicosEnSede = (mina: MinaAgrupada): number => {
+    let count = 0;
+    const codigosOtDeSede = new Set(mina.ots.map(o => o.codigo));
+    for (const e of Object.values(cronograma)) {
+      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+      if (!actividadesRojas.has(e.actividad)) continue;
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+        if (codigos.some(c => codigosOtDeSede.has(c))) {
+          count++;
+        }
+      }
+    }
+    // Eliminar duplicados de técnico (un técnico cuenta como 1 aunque tenga varias OTs ese día)
+    const tecnicosUnicos = new Set<string>();
+    for (const e of Object.values(cronograma)) {
+      if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
+      if (!actividadesRojas.has(e.actividad)) continue;
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+        if (codigos.some(c => codigosOtDeSede.has(c))) {
+          tecnicosUnicos.add(e.tecnico_id);
+        }
+      }
+    }
+    return tecnicosUnicos.size;
+  };
+
   const handleToggleVisibleSede = async (nombre: string) => {
     const sede = todasLasSedes.find(s => s.nombre === nombre);
     if (!sede) return;
@@ -354,9 +383,7 @@ export function MapaMinas() {
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
-  // FIX: Crear icono de badge circular pequeño (blanco con borde oscuro)
   const crearBadgeIcon = (total: number, radius: number): L.DivIcon => {
-    // Tamaño del badge proporcional al radio pero siempre pequeño (10-16px)
     const badgeSize = Math.max(14, Math.min(radius + 4, 18));
     return L.divIcon({
       className: 'ot-badge-icon',
@@ -377,12 +404,10 @@ export function MapaMinas() {
         line-height: 1;
       ">${total}</div>`,
       iconSize: [badgeSize, badgeSize],
-      // Posicionar arriba a la derecha del marcador
       iconAnchor: [badgeSize - 2, badgeSize - 2],
     });
   };
 
-  // Renderizar marcadores
   useEffect(() => {
     if (!mapRef.current) return;
     markersRef.current.forEach(m => m.remove());
@@ -431,18 +456,16 @@ export function MapaMinas() {
         });
         markersRef.current.push(marker);
 
-        // FIX: Badge circular pequeño con el contador
         if (total > 0 && mostrarContadores) {
           const badgeIcon = crearBadgeIcon(total, radius);
           const badgeMarker = L.marker([coord.lat, coord.lng], {
             icon: badgeIcon,
-            interactive: false, // no captura clicks, deja pasar al marcador principal
+            interactive: false,
             zIndexOffset: 1000,
           }).addTo(mapRef.current!);
           badgesRef.current.push(badgeMarker);
         }
       } else {
-        // Grupo de sedes superpuestas
         const primera = grupo[0];
         const totalOts = grupo.reduce((sum, g) => sum + g.total, 0);
         const totalEnProceso = grupo.reduce((sum, g) => sum + g.enProceso, 0);
@@ -474,7 +497,6 @@ export function MapaMinas() {
         });
         groupMarkersRef.current.push(marker);
 
-        // FIX: Badge para grupo también
         if (totalOts > 0 && mostrarContadores) {
           const badgeIcon = crearBadgeIcon(totalOts, radius);
           const badgeMarker = L.marker([primera.coord.lat, primera.coord.lng], {
@@ -522,7 +544,6 @@ export function MapaMinas() {
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">🗺️ Mapa de Minas</div>
             <div className="flex gap-1">
-              {/* FIX: Botón para mostrar/ocultar contadores */}
               <button
                 onClick={() => setMostrarContadores(!mostrarContadores)}
                 className={`p-1 rounded ${mostrarContadores ? "text-[#E91E63] bg-pink-50" : "text-gray-400 hover:text-gray-600"}`}
@@ -591,6 +612,7 @@ export function MapaMinas() {
           ) : (
             minasFiltradasLista.map((mina) => {
               const isVisible = mina.coord.visible !== false;
+              const numTecnicos = filtroFechasActivo ? contarTecnicosEnSede(mina) : 0;
               return (
                 <div key={mina.coord.nombre} className={`p-2 border-b border-gray-100 hover:bg-gray-50 ${selectedMina?.coord.nombre === mina.coord.nombre ? "bg-pink-50 border-l-2 border-l-[#E91E63]" : ""} ${!isVisible ? 'opacity-50' : ''}`}>
                   <div className="flex items-center gap-2">
@@ -603,7 +625,11 @@ export function MapaMinas() {
                     </button>
                     <div className="flex-1 min-w-0 cursor-pointer" onClick={() => isVisible && zoomToMina(mina)}>
                       <div className="text-xs font-semibold text-gray-900 truncate">{mina.coord.nombre}</div>
-                      <div className="text-[10px] text-gray-500 truncate">{mina.coord.region}</div>
+                      <div className="text-[10px] text-gray-500 truncate">
+                        {filtroFechasActivo 
+                          ? `${mina.otsRealizandose.length} OTs · ${numTecnicos} Técnicos` 
+                          : `${mina.total} OTs`}
+                      </div>
                     </div>
                     <div className="text-xs font-bold text-gray-700">
                       {filtroFechasActivo ? mina.otsRealizandose.length : mina.total}
