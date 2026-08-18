@@ -7,14 +7,6 @@ import { useState, useRef, useEffect } from "react";
 const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const MESES_COMPLETOS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
-// FIX: Colores especiales para descansos (diferenciados del rojo principal)
-const DESCANSO_COLORS = {
-  bg: "#f3e8ff",       // lila muy claro
-  border: "#7c3aed",   // púrpura
-  text: "#5b21b6",     // púrpura oscuro
-  soft: "#faf5ff",     // lila suavísimo
-};
-
 const ACTIVIDADES_DESCANSO = [
   "DESCANSO PROY.", "DESCANSO MC", "DESCANSO ANT", "DESC.MÉDICO",
   "FIN DE SEMANA", "FERIADO", "VACACIONES", "PERMISO", "CURSOS",
@@ -34,14 +26,15 @@ function esDescanso(actividad: string): boolean {
   return ACTIVIDADES_DESCANSO.some(d => upper.includes(d));
 }
 
+// FIX: Mantener fondo rojo pero texto gris para descansos
 function getColorHex(actividades: Actividad[], nombre: string) {
-  // FIX: Si es descanso, usar color púrpura en vez de rojo
-  if (esDescanso(nombre)) {
-    return DESCANSO_COLORS;
-  }
   const a = actividades.find((x) => x.nombre === nombre);
   if (!a) return null;
-  return COLOR_HEX[a.color];
+  const baseHex = COLOR_HEX[a.color];
+  if (esDescanso(nombre)) {
+    return { ...baseHex, text: "#757675" }; 
+  }
+  return baseHex;
 }
 
 function getDiasMes(year: number, month: number): Date[] {
@@ -107,7 +100,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
   const anchoColDia = vista === "año" ? 50 : 120;
   const anchoColFija = vista === "año" ? 160 : 220;
 
-  // FIX: Hoy
   const hoyIso = formatFechaISO(new Date());
 
   const otMap: Record<string, OT> = {};
@@ -238,6 +230,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
         <div className="font-bold truncate" style={{ color: colorHex?.text }}>
           {entrada.actividad}
         </div>
+        {/* FIX: No mostrar "—" si no hay OTs o detalle */}
         {mostrarDetalles && entrada.ots_asignadas && entrada.ots_asignadas !== "—" && (
           <div className="mt-0.5 space-y-0.5">
             {entrada.ots_asignadas.split(",").map((cod, i) => {
@@ -295,7 +288,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     );
   };
 
-  // FIX: borderCollapse separate para que sticky funcione correctamente
   const tableStyle: React.CSSProperties = {
     tableLayout: "fixed",
     borderCollapse: "separate",
@@ -365,7 +357,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       const colorHex = getColorHex(actividades, entrada.actividad);
       if (colorHex) return colorHex.soft;
     }
-    // FIX: Día actual con fondo sutil lila
     if (isToday) return "#faf5ff";
     if (isWeekend) return "#f9fafb";
     return "#ffffff";
