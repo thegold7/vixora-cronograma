@@ -7,6 +7,20 @@ import { useState, useRef, useEffect } from "react";
 const DOW_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const MESES_COMPLETOS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
+// FIX: Colores especiales para descansos (diferenciados del rojo principal)
+const DESCANSO_COLORS = {
+  bg: "#f3e8ff",       // lila muy claro
+  border: "#7c3aed",   // púrpura
+  text: "#5b21b6",     // púrpura oscuro
+  soft: "#faf5ff",     // lila suavísimo
+};
+
+const ACTIVIDADES_DESCANSO = [
+  "DESCANSO PROY.", "DESCANSO MC", "DESCANSO ANT", "DESC.MÉDICO",
+  "FIN DE SEMANA", "FERIADO", "VACACIONES", "PERMISO", "CURSOS",
+  "MOVILIZACIÓN",
+];
+
 interface Props {
   tecnicos: Tecnico[];
   actividades: Actividad[];
@@ -15,7 +29,16 @@ interface Props {
   modoAcceso: "lector" | "editor";
 }
 
+function esDescanso(actividad: string): boolean {
+  const upper = actividad.toUpperCase();
+  return ACTIVIDADES_DESCANSO.some(d => upper.includes(d));
+}
+
 function getColorHex(actividades: Actividad[], nombre: string) {
+  // FIX: Si es descanso, usar color púrpura en vez de rojo
+  if (esDescanso(nombre)) {
+    return DESCANSO_COLORS;
+  }
   const a = actividades.find((x) => x.nombre === nombre);
   if (!a) return null;
   return COLOR_HEX[a.color];
@@ -84,6 +107,9 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
   const anchoColDia = vista === "año" ? 50 : 120;
   const anchoColFija = vista === "año" ? 160 : 220;
 
+  // FIX: Hoy
+  const hoyIso = formatFechaISO(new Date());
+
   const otMap: Record<string, OT> = {};
   for (const o of ots) otMap[o.codigo] = o;
 
@@ -133,7 +159,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     };
   }, [modoAcceso, abrirModalEdicion]);
 
-  // FIX: Un solo clic selecciona la celda. Doble clic abre el modal.
   const handleCellClick = (tecnico_id: string, fecha: string, e: React.MouseEvent) => {
     if (modoAcceso !== "editor") return;
     if (isDragging) {
@@ -147,7 +172,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       setSeleccionRango({ inicio, fin, tecnico_id: tid });
       return;
     }
-    // Single click selects the cell (allows Ctrl+C to work immediately)
     setSeleccionRango({ inicio: fecha, fin: fecha, tecnico_id });
   };
 
@@ -271,17 +295,19 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     );
   };
 
+  // FIX: borderCollapse separate para que sticky funcione correctamente
   const tableStyle: React.CSSProperties = {
     tableLayout: "fixed",
-    borderCollapse: "collapse",
+    borderCollapse: "separate",
+    borderSpacing: 0,
     width: anchoColFija + dias.length * anchoColDia,
   };
 
-  const thStyle = (inRango: boolean): React.CSSProperties => ({
+  const thStyle = (inRango: boolean, isToday: boolean): React.CSSProperties => ({
     position: "sticky",
     top: 0,
     zIndex: 3,
-    backgroundColor: inRango ? "#E91E63" : "#1d1d1f",
+    backgroundColor: inRango ? "#E91E63" : isToday ? "#7c3aed" : "#1d1d1f",
     color: "white",
     width: anchoColDia,
     minWidth: anchoColDia,
@@ -330,7 +356,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     inRango: boolean,
     inDragRange: boolean,
     isDragHover: boolean,
-    tecnico: Tecnico
+    tecnico: Tecnico,
+    isToday: boolean
   ) => {
     if (inRango || isDragHover) return "#fce4ec";
     if (inDragRange) return "#f8bbd0";
@@ -338,6 +365,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       const colorHex = getColorHex(actividades, entrada.actividad);
       if (colorHex) return colorHex.soft;
     }
+    // FIX: Día actual con fondo sutil lila
+    if (isToday) return "#faf5ff";
     if (isWeekend) return "#f9fafb";
     return "#ffffff";
   };
@@ -428,11 +457,12 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                   const inRango = isDateInRango(iso);
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                   const esPrimeroDeMes = d.getDate() === 1;
+                  const isToday = iso === hoyIso;
                   return (
                     <th
                       key={iso}
                       style={{
-                        ...thStyle(inRango),
+                        ...thStyle(inRango, isToday),
                         top: 24,
                         opacity: isWeekend ? 0.8 : 1,
                         borderLeft: esPrimeroDeMes ? "2px solid #E91E63" : undefined,
@@ -457,10 +487,11 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                 const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                 const iso = formatFechaISO(d);
                 const inRango = isDateInRango(iso);
+                const isToday = iso === hoyIso;
                 return (
                   <th
                     key={iso}
-                    style={thStyle(inRango)}
+                    style={thStyle(inRango, isToday)}
                     className={isWeekend ? "opacity-80" : ""}
                   >
                     <div className="text-xs font-semibold">{d.getDate()}</div>
@@ -521,8 +552,9 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                   const inDragRange = isCellInDragRange(t.id, iso);
                   const esPrimeroDeMes = vista === "año" && d.getDate() === 1;
                   const colorHex = entrada ? getColorHex(actividades, entrada.actividad) : null;
+                  const isToday = iso === hoyIso;
 
-                  const cellBg = getCellBg(entrada, isWeekend, inRango, inDragRange, isDragHover, t);
+                  const cellBg = getCellBg(entrada, isWeekend, inRango, inDragRange, isDragHover, t, isToday);
                   const cellOpacity = getCellOpacity(entrada, t);
 
                   return (
@@ -544,7 +576,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                         borderRight: "1px solid #e5e7eb",
                         borderBottom: "1px solid #e5e7eb",
                         borderLeft: esPrimeroDeMes ? "2px solid #E91E63" : colorHex && entrada ? `3px solid ${colorHex.border}` : undefined,
-                        boxShadow: inRango || isDragHover ? "inset 0 0 0 2px #E91E63" : undefined,
+                        boxShadow: inRango || isDragHover ? "inset 0 0 0 2px #E91E63" : isToday ? "inset 0 0 0 1px #7c3aed" : undefined,
                         boxSizing: "border-box",
                         verticalAlign: "top",
                         cursor: modoAcceso === "editor" ? "pointer" : "default",
