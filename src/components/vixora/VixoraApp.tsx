@@ -64,7 +64,7 @@ export function VixoraApp() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [modalEdicion, loginModalAbierto, seleccionRango, limpiarSeleccionRango]);
 
-  // Atajos de teclado
+  // FIX: Atajos de teclado mejorados para Ctrl+C / Ctrl+V
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (modalEdicion?.abierto || loginModalAbierto) return;
@@ -72,22 +72,29 @@ export function VixoraApp() {
       const activeEl = document.activeElement;
       const enInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT");
 
-      if ((e.ctrlKey || e.metaKey) && e.key === "c" && seleccionRango.inicio && !enInput) {
-        e.preventDefault();
-        copiarRango();
+      // Si está en un input, no hacer nada (dejar que el navegador copie/pegue texto)
+      if (enInput) return;
+
+      // Ctrl+C o Cmd+C
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+        if (seleccionRango.inicio && seleccionRango.tecnico_id) {
+          e.preventDefault(); // Prevenir copia de texto del navegador
+          copiarRango();
+        }
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === "v" && !enInput) {
+      // Ctrl+V o Cmd+V
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
         if (!clipboard) {
-          showToast("Copia algo primero (Ctrl+C)", "info");
+          showToast("Copia algo primero (Ctrl+C en una celda con datos)", "info");
           return;
         }
         if (!seleccionRango.inicio || !seleccionRango.tecnico_id) {
-          showToast("Selecciona la celda destino primero", "info");
+          showToast("Selecciona la celda destino primero (click en una celda vacía)", "info");
           return;
         }
-        e.preventDefault();
+        e.preventDefault(); // Prevenir pegado de texto del navegador
         pegarEnCelda(seleccionRango.tecnico_id, seleccionRango.inicio);
         return;
       }
