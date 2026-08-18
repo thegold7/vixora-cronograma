@@ -3,7 +3,7 @@
 import { useStore } from "@/lib/store";
 import { COLOR_HEX, type Tecnico, type Actividad, type CronogramaMap, type OT } from "@/lib/types";
 import { useMemo, useState } from "react";
-import { RefreshCw, Search, TrendingUp, Users, Briefcase, Calendar } from "lucide-react";
+import { RefreshCw, Search, TrendingUp, Users, Briefcase, Calendar, Download, History } from "lucide-react";
 import { formatFechaISO } from "@/lib/store";
 
 interface Props {
@@ -17,13 +17,14 @@ const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio"
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
 export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) {
-  const { cargarDatos } = useStore();
+  const { cargarDatos, showToast } = useStore();
   const [hoy] = useState(() => new Date());
   const [inputInicio, setInputInicio] = useState<string>("");
   const [inputFin, setInputFin] = useState<string>("");
   const [rangoAplicado, setRangoAplicado] = useState<{ inicio: string; fin: string }>({ inicio: "", fin: "" });
   const [actualizando, setActualizando] = useState(false);
   const [vistaSecundaria, setVistaSecundaria] = useState<"porTecnico" | "porActividad" | "porDia">("porTecnico");
+  const [queryHistorico, setQueryHistorico] = useState("");
 
   const handleActualizar = async () => {
     setActualizando(true);
@@ -118,9 +119,69 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     return {
       total, totalEntries: entries.length, distColor, porTecnico, cargaPct, sobrecarga,
       enProyecto, enOficina, disponibles, statsPorOt, statsPorActividad, statsPorDia,
-      statsPorTecnicoLista, periodoLabel, heatmapData, maxHeat, yearActual,
+      statsPorTecnicoLista, periodoLabel, heatmapData, maxHeat, yearActual, entries
     };
   }, [tecnicos, cronograma, actividades, ots, hoy, rangoAplicado]);
+
+  // Histórico de Viajes
+  const historicoViajes = useMemo(() => {
+    const viajes: { tecnico: string; sede: string; ot: string; fecha: string; actividad: string }[] = [];
+    const otMap: Record<string, OT> = {};
+    for (const o of ots) otMap[o.codigo] = o;
+
+    for (const e of stats.entries) {
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+        for (const cod of codigos) {
+          const ot = otMap[cod];
+          const tec = tecnicos.find(t => t.id === e.tecnico_id);
+          if (ot && tec) {
+            viajes.push({
+              tecnico: tec.nombre,
+              sede: ot.sede || "—",
+              ot: cod,
+              fecha: e.fecha,
+              actividad: e.actividad
+            });
+          }
+        }
+      }
+    }
+    return viajes.sort((a, b) => b.fecha.localeCompare(a.fecha));
+  }, [stats.entries, ots, tecnicos]);
+
+  const historicoFiltrado = useMemo(() => {
+    if (!queryHistorico) return historicoViajes;
+    const q = queryHistorico.toLowerCase();
+    return historicoViajes.filter(v => 
+      v.tecnico.toLowerCase().includes(q) || 
+      v.sede.toLowerCase().includes(q) || 
+      v.ot.toLowerCase().includes(q)
+    );
+  }, [historicoViajes, queryHistorico]);
+
+  const handleExportarExcel = () => {
+    // Exportar a CSV (compatible con Excel)
+    const headers = ["Técnico", "Sede", "OT", "Fecha", "Actividad"];
+    const rows = historicoFiltrado.map(v => [v.tecnico, v.sede, v.ot, v.fecha, v.actividad]);
+    
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(","))
+    ].join("\n");
+    
+    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `historico_viajes_${formatFechaISO(new Date())}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    showToast("Histórico exportado a Excel/CSV", "ok");
+  };
 
   const donaPct = (n: number) => Math.round((n / (stats.total || 1)) * 100);
   const totalDona = stats.enProyecto + stats.enOficina + stats.disponibles || 1;
@@ -179,6 +240,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         {!rangoAplicado.inicio && <span className="text-[10px] text-gray-400 italic">(mes actual)</span>}
       </div>
 
+      {/* KPIs Principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KpiCard icon={<Users size={20} />} label="Personal Total" value={stats.total} sub="técnicos activos" color="#1d1d1f" />
         <KpiCard icon={<Briefcase size={20} />} label="En Proyecto" value={stats.enProyecto} sub={`hoy · ${donaPct(stats.enProyecto)}%`} color="#b3261e" />
@@ -186,6 +248,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         <KpiCard icon={<TrendingUp size={20} />} label="Asignaciones" value={stats.totalEntries} sub="en el período" color="#E91E63" />
       </div>
 
+      {/* Gráficos Circulares */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col items-center">
           <h3 className="text-sm font-bold text-gray-700 mb-3">% Carga Laboral</h3>
@@ -248,54 +311,51 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* HEATMAP HORIZONTAL (12 filas x 31 columnas) */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6 overflow-x-auto">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">Heatmap de Actividad {stats.yearActual}</h3>
-        <div className="flex flex-col gap-[2px]">
-          {/* Encabezado de días (1-31) */}
-          <div className="flex gap-[2px] ml-8">
-            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
-              <div key={d} className="w-[10px] text-[7px] text-gray-400 text-center">{d}</div>
-            ))}
-          </div>
-          
-          {/* Filas de meses */}
-          {MESES_CORTOS.map((mes, mIdx) => {
-            const diasMes = new Date(stats.yearActual, mIdx + 1, 0).getDate();
-            return (
-              <div key={mIdx} className="flex items-center gap-[2px]">
-                <div className="w-8 text-[9px] text-gray-500 font-medium">{mes}</div>
-                <div className="flex gap-[2px]">
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map(d => {
-                    if (d > diasMes) return <div key={d} className="w-[10px] h-[10px]" />;
-                    const iso = `${stats.yearActual}-${String(mIdx + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-                    const count = stats.heatmapData[iso] || 0;
-                    return (
-                      <div
-                        key={d}
-                        title={`${iso}: ${count} asignación(es)`}
-                        className="w-[10px] h-[10px] rounded-sm"
-                        style={{ backgroundColor: getHeatColor(count) }}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-1 mt-3 text-[8px] text-gray-500">
-          <span>Menos</span>
-          <div className="w-[10px] h-[10px] rounded-sm bg-gray-100"></div>
-          <div className="w-[10px] h-[10px] rounded-sm bg-red-200"></div>
-          <div className="w-[10px] h-[10px] rounded-sm bg-red-300"></div>
-          <div className="w-[10px] h-[10px] rounded-sm bg-red-400"></div>
-          <div className="w-[10px] h-[10px] rounded-sm bg-red-700"></div>
-          <span>Más</span>
-        </div>
-      </div>
-
+      {/* Heatmap + Top OTs (Lado a Lado para compactar) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <div className="bg-white border border-gray-200 rounded-lg p-4 overflow-x-auto">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">Heatmap de Actividad {stats.yearActual}</h3>
+          <div className="flex flex-col gap-[2px]">
+            <div className="flex gap-[2px] ml-8">
+              {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                <div key={d} className="w-[10px] text-[7px] text-gray-400 text-center">{d}</div>
+              ))}
+            </div>
+            {MESES_CORTOS.map((mes, mIdx) => {
+              const diasMes = new Date(stats.yearActual, mIdx + 1, 0).getDate();
+              return (
+                <div key={mIdx} className="flex items-center gap-[2px]">
+                  <div className="w-8 text-[9px] text-gray-500 font-medium">{mes}</div>
+                  <div className="flex gap-[2px]">
+                    {Array.from({ length: 31 }, (_, i) => i + 1).map(d => {
+                      if (d > diasMes) return <div key={d} className="w-[10px] h-[10px]" />;
+                      const iso = `${stats.yearActual}-${String(mIdx + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                      const count = stats.heatmapData[iso] || 0;
+                      return (
+                        <div
+                          key={d}
+                          title={`${iso}: ${count} asignación(es)`}
+                          className="w-[10px] h-[10px] rounded-sm"
+                          style={{ backgroundColor: getHeatColor(count) }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1 mt-3 text-[8px] text-gray-500">
+            <span>Menos</span>
+            <div className="w-[10px] h-[10px] rounded-sm bg-gray-100"></div>
+            <div className="w-[10px] h-[10px] rounded-sm bg-red-200"></div>
+            <div className="w-[10px] h-[10px] rounded-sm bg-red-300"></div>
+            <div className="w-[10px] h-[10px] rounded-sm bg-red-400"></div>
+            <div className="w-[10px] h-[10px] rounded-sm bg-red-700"></div>
+            <span>Más</span>
+          </div>
+        </div>
+
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <h3 className="text-sm font-bold text-gray-700 mb-3">Top 10 OTs Más Asignadas</h3>
           {stats.statsPorOt.length === 0 ? (
@@ -323,7 +383,10 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
             </div>
           )}
         </div>
+      </div>
 
+      {/* Estadísticas Detalladas */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h3 className="text-sm font-bold text-gray-700">Estadísticas Detalladas</h3>
@@ -406,6 +469,70 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
             </div>
           )}
         </div>
+        
+        {/* Espacio para futuro KPI o gráfico */}
+        <div className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-center text-gray-400 text-xs italic">
+          Reservado para futuras métricas
+        </div>
+      </div>
+
+      {/* HISTÓRICO DE VIAJES */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <History size={16} className="text-[#E91E63]" />
+            <h3 className="text-sm font-bold text-gray-700">Histórico de Viajes</h3>
+            <span className="text-[10px] text-gray-500">({historicoFiltrado.length} registros)</span>
+          </div>
+          <div className="flex gap-2 items-center">
+            <div className="relative">
+              <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={queryHistorico}
+                onChange={(e) => setQueryHistorico(e.target.value)}
+                placeholder="Buscar técnico, sede u OT..."
+                className="pl-7 pr-2 py-1 text-xs border border-gray-200 rounded w-64"
+              />
+            </div>
+            <button
+              onClick={handleExportarExcel}
+              disabled={historicoFiltrado.length === 0}
+              className="flex items-center gap-1 px-3 py-1 text-xs text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50"
+            >
+              <Download size={12} /> Exportar Excel
+            </button>
+          </div>
+        </div>
+
+        {historicoFiltrado.length === 0 ? (
+          <p className="text-xs text-gray-400 text-center py-4">No hay viajes registrados en el período seleccionado.</p>
+        ) : (
+          <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Fecha</th>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Técnico</th>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Sede</th>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">OT</th>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Actividad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historicoFiltrado.map((v, i) => (
+                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-600 font-mono">{v.fecha.split("-").reverse().join("/")}</td>
+                    <td className="px-3 py-2 text-gray-900 font-medium">{v.tecnico}</td>
+                    <td className="px-3 py-2 text-gray-600">{v.sede}</td>
+                    <td className="px-3 py-2 text-gray-600 font-mono">{v.ot}</td>
+                    <td className="px-3 py-2 text-gray-600">{v.actividad}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
