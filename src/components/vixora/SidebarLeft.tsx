@@ -5,7 +5,7 @@ import { VIXORA_COLORS } from "@/lib/types";
 import {
   Calendar, Users, BarChart3, Map, Shield,
   Eye, EyeOff, RefreshCw, LogIn, LogOut, Pencil,
-  Database, Save, Download, ChevronDown, RotateCcw, Undo2, Redo2
+  Database, Save, Download, ChevronDown, Upload
 } from "lucide-react";
 import { useState } from "react";
 
@@ -19,18 +19,12 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
     modoAcceso, setLoginModalAbierto, logout,
     mostrarDetalles, toggleMostrarDetalles,
     regenerarVisual, guardarCambiosEnExcel,
-    cargarDatosSilencioso, fechaActual, cambiosSinGuardar, showToast,
-    // FIX: Añadidas funciones de undo/redo simples
-    setHabilitaciones, habilitaciones
+    cargarDatosSilencioso, fechaActual, cambiosSinGuardar, showToast
   } = useStore();
 
   const [actualizandoBackup, setActualizandoBackup] = useState(false);
   const [actualizandoVisual, setActualizandoVisual] = useState(false);
-  const [descartando, setDescartando] = useState(false);
-  
-  // Historial simple para Undo/Redo
-  const [historial, setHistorial] = useState<any[]>([]);
-  const [indiceHistorial, setIndiceHistorial] = useState(-1);
+  const [cargandoBackup, setCargandoBackup] = useState(false);
 
   const handleActualizarBackup = async () => {
     setActualizandoBackup(true);
@@ -45,14 +39,14 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
     setActualizandoVisual(false);
   };
 
-  const handleDescartar = async () => {
+  const handleCargarBackup = async () => {
     if (cambiosSinGuardar) {
-      if (!confirm("Tienes cambios sin guardar. ¿Descartarlos y recargar desde Excel?")) return;
+      if (!confirm("Tienes cambios sin guardar. ¿Quieres sobreescribirlos cargando el Backup del Excel?")) return;
     }
-    setDescartando(true);
-    await cargarDatosSilencioso();
-    setDescartando(false);
-    showToast("Cambios descartados", "info");
+    setCargandoBackup(true);
+    await cargarDatosSilencioso(); // Esto jala la info del Excel
+    setCargandoBackup(false);
+    showToast("Cronograma cargado desde Excel", "info");
   };
 
   const esEditor = modoAcceso === "editor";
@@ -139,13 +133,21 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
                 </div>
               )}
 
-              {/* Botón Actualizar Backup */}
+              {/* Botón Actualizar Backup (Guardar en Excel) */}
               <SidebarButton
                 icon={actualizandoBackup ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
                 label={actualizandoBackup ? "Guardando..." : "Actualizar Backup"}
                 active={false}
                 onClick={handleActualizarBackup}
                 highlight={cambiosSinGuardar}
+              />
+
+              {/* Botón Cargar Backup (Jalar de Excel) */}
+              <SidebarButton
+                icon={cargandoBackup ? <RefreshCw size={18} className="animate-spin" /> : <Upload size={18} />}
+                label={cargandoBackup ? "Cargando..." : "Cargar Backup"}
+                active={false}
+                onClick={handleCargarBackup}
               />
 
               {/* Botón Actualizar Excel Visual */}
@@ -155,31 +157,6 @@ export function SidebarLeft({ onNavigate, seccionActual }: Props) {
                 active={false}
                 onClick={handleActualizarVisual}
               />
-
-              {/* Botones Deshacer / Rehacer / Descartar */}
-              <div className="flex gap-1">
-                <button
-                  className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded text-xs font-medium text-white/70 hover:bg-white/10 hover:text-white disabled:opacity-30"
-                  title="Deshacer"
-                  disabled
-                >
-                  <Undo2 size={14} />
-                </button>
-                <button
-                  className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded text-xs font-medium text-white/70 hover:bg-white/10 hover:text-white disabled:opacity-30"
-                  title="Rehacer"
-                  disabled
-                >
-                  <Redo2 size={14} />
-                </button>
-                <button
-                  onClick={handleDescartar}
-                  className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded text-xs font-medium text-white/70 hover:bg-white/10 hover:text-white"
-                  title="Descartar y recargar"
-                >
-                  {descartando ? <RefreshCw size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                </button>
-              </div>
             </>
           )}
         </div>
