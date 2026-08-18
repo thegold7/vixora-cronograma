@@ -3,7 +3,7 @@
 import { useStore } from "@/lib/store";
 import { COLOR_HEX, type Tecnico, type Actividad, type CronogramaMap, type OT } from "@/lib/types";
 import { useMemo, useState } from "react";
-import { RefreshCw, Search, TrendingUp, Users, Briefcase, Calendar, Download, History } from "lucide-react";
+import { RefreshCw, Search, TrendingUp, Users, Briefcase, Calendar, Download, History, MapPin } from "lucide-react";
 import { formatFechaISO } from "@/lib/store";
 
 interface Props {
@@ -25,6 +25,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
   const [actualizando, setActualizando] = useState(false);
   const [vistaSecundaria, setVistaSecundaria] = useState<"porTecnico" | "porActividad" | "porDia">("porTecnico");
   const [queryHistorico, setQueryHistorico] = useState("");
+  const [filtroTecnico, setFiltroTecnico] = useState<string>(""); // "" significa todos
 
   const handleActualizar = async () => {
     setActualizando(true);
@@ -62,6 +63,11 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       diasPeriodo = new Date(year, month + 1, 0).getDate();
     }
 
+    // FIX: Filtrar por técnico si está seleccionado
+    if (filtroTecnico) {
+      entries = entries.filter(e => e.tecnico_id === filtroTecnico);
+    }
+
     const distColor: Record<string, number> = { rojo: 0, amarillo: 0, verde: 0 };
     for (const e of entries) {
       const a = actividades.find((x) => x.nombre === e.actividad);
@@ -71,7 +77,9 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     const porTecnico: Record<string, number> = {};
     for (const e of entries) porTecnico[e.tecnico_id] = (porTecnico[e.tecnico_id] ?? 0) + 1;
 
-    const cargaMax = total * diasPeriodo;
+    // FIX: Calcular carga basándose en el técnico seleccionado o en todos
+    const totalTecnicosParaCarga = filtroTecnico ? 1 : total;
+    const cargaMax = totalTecnicosParaCarga * diasPeriodo;
     const cargaActual = entries.length;
     const cargaPct = cargaMax > 0 ? Math.round((cargaActual / cargaMax) * 100) : 0;
     const sobrecarga = activos.filter((t) => (porTecnico[t.id] ?? 0) > 22);
@@ -79,6 +87,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     let enProyecto = 0, enOficina = 0, disponibles = 0;
     const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
     for (const t of activos) {
+      if (filtroTecnico && t.id !== filtroTecnico) continue;
       const entry = cronograma[`${t.id}|${hoyIso}`];
       if (!entry) disponibles++;
       else if (entry.actividad.includes("PROYECTO") || entry.actividad.includes("SERV.")) enProyecto++;
@@ -106,13 +115,18 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
 
     const statsPorTecnicoLista = activos.map((t) => ({ tecnico: t, count: porTecnico[t.id] ?? 0 })).sort((a, b) => b.count - a.count);
 
-    // Heatmap data
+    // Heatmap data (Ignora filtro de técnico para mostrar el panorama general)
+    let heatmapEntries = Object.values(cronograma);
+    if (rangoAplicado.inicio && rangoAplicado.fin) {
+      heatmapEntries = heatmapEntries.filter((e) => e.fecha >= rangoAplicado.inicio && e.fecha <= rangoAplicado.fin);
+    } else {
+      const year = hoy.getFullYear();
+      heatmapEntries = heatmapEntries.filter(e => e.fecha.startsWith(`${year}-`));
+    }
     const yearActual = hoy.getFullYear();
     const heatmapData: Record<string, number> = {};
-    for (const e of Object.values(cronograma)) {
-      if (e.fecha.startsWith(`${yearActual}-`)) {
-        heatmapData[e.fecha] = (heatmapData[e.fecha] ?? 0) + 1;
-      }
+    for (const e of heatmapEntries) {
+      heatmapData[e.fecha] = (heatmapData[e.fecha] ?? 0) + 1;
     }
     const maxHeat = Math.max(...Object.values(heatmapData), 1);
 
@@ -121,7 +135,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       enProyecto, enOficina, disponibles, statsPorOt, statsPorActividad, statsPorDia,
       statsPorTecnicoLista, periodoLabel, heatmapData, maxHeat, yearActual, entries
     };
-  }, [tecnicos, cronograma, actividades, ots, hoy, rangoAplicado]);
+  }, [tecnicos, cronograma, actividades, ots, hoy, rangoAplicado, filtroTecnico]);
 
   // Histórico de Viajes
   const historicoViajes = useMemo(() => {
@@ -160,8 +174,30 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     );
   }, [historicoViajes, queryHistorico]);
 
+  // FIX: Nueva métrica disruptiva - Top 5 Sedes Más Visitadas
+  const topSedes = useMemo(() => {
+    const sedeCount: Record<string, number> = {};
+    const otMap: Record<string, OT> = {};
+    for (const o of ots) otMap[o.codigo] = o;
+
+    for (const e of stats.entries) {
+      if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        const codigos = e.ots_asignadas.split(",").map(s => s.trim());
+        for (const cod of codigos) {
+          const ot = otMap[cod];
+          if (ot && ot.sede) {
+            sedeCount[ot.sede] = (sedeCount[ot.sede] ?? 0) + 1;
+          }
+        }
+      }
+    }
+    return Object.entries(sedeCount)
+      .map(([sede, count]) => ({ sede, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [stats.entries, ots]);
+
   const handleExportarExcel = () => {
-    // Exportar a CSV (compatible con Excel)
     const headers = ["Técnico", "Sede", "OT", "Fecha", "Actividad"];
     const rows = historicoFiltrado.map(v => [v.tecnico, v.sede, v.ot, v.fecha, v.actividad]);
     
@@ -237,7 +273,21 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           <Search size={12} /> Aplicar
         </button>
         {rangoAplicado.inicio && <button onClick={handleLimpiarRango} className="text-xs text-gray-500 hover:text-red-500">✕ Limpiar</button>}
-        {!rangoAplicado.inicio && <span className="text-[10px] text-gray-400 italic">(mes actual)</span>}
+        
+        {/* FIX: Filtro por Técnico */}
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-700">Técnico:</span>
+          <select 
+            value={filtroTecnico} 
+            onChange={(e) => setFiltroTecnico(e.target.value)}
+            className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+          >
+            <option value="">Todos</option>
+            {tecnicos.filter(t => t.activo).map(t => (
+              <option key={t.id} value={t.id}>{t.nombre}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* KPIs Principales */}
@@ -266,8 +316,12 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
               <span className="text-[10px] text-gray-500">ocupación</span>
             </div>
           </div>
+          {/* FIX: Leyenda explicativa */}
+          <div className="mt-2 text-[9px] text-gray-400 text-center italic">
+            Calculado: Asignaciones / (Técnicos × Días)
+          </div>
           {stats.sobrecarga.length > 0 && (
-            <div className="mt-2 text-[10px] text-red-600">⚠ {stats.sobrecarga.length} en sobrecarga</div>
+            <div className="mt-1 text-[10px] text-red-600">⚠ {stats.sobrecarga.length} en sobrecarga</div>
           )}
         </div>
 
@@ -285,6 +339,9 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400"></span>Proy: {stats.enProyecto}</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400"></span>Ofi: {stats.enOficina}</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400"></span>Disp: {stats.disponibles}</span>
+          </div>
+          <div className="mt-2 text-[9px] text-gray-400 text-center italic">
+            Distribución del personal en el día de hoy
           </div>
         </div>
 
@@ -307,6 +364,9 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
                 </div>
               );
             })}
+          </div>
+          <div className="mt-3 text-[9px] text-gray-400 italic">
+            Clasificación de todas las asignaciones del período
           </div>
         </div>
       </div>
@@ -385,7 +445,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* Estadísticas Detalladas */}
+      {/* Estadísticas Detalladas y Nueva Métrica Disruptiva */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -470,9 +530,45 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           )}
         </div>
         
-        {/* Espacio para futuro KPI o gráfico */}
-        <div className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-center text-gray-400 text-xs italic">
-          Reservado para futuras métricas
+        {/* FIX: Métrica Disruptiva - Top 5 Sedes Más Visitadas */}
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <MapPin size={16} className="text-[#E91E63]" />
+            <h3 className="text-sm font-bold text-gray-700">Top 5 Sedes Más Visitadas</h3>
+          </div>
+          <div className="text-[9px] text-gray-400 italic mb-4">Basado en el conteo de OTs asignadas en el período seleccionado</div>
+          
+          {topSedes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-[200px] text-gray-400 text-xs italic">
+              <MapPin size={24} className="mb-2 opacity-50" />
+              No hay visitas registradas en el período
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {topSedes.map((item, i) => {
+                const maxCount = topSedes[0].count || 1;
+                const pct = Math.round((item.count / maxCount) * 100);
+                const colors = ["#E91E63", "#b3261e", "#8a6d00", "#1a7a3a", "#3b82f6"];
+                const color = colors[i] || "#6b7280";
+                return (
+                  <div key={item.sede}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs font-bold text-gray-900 flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white" style={{ backgroundColor: color }}>
+                          {i + 1}
+                        </span>
+                        {item.sede}
+                      </span>
+                      <span className="text-xs font-bold text-gray-600">{item.count} OTs</span>
+                    </div>
+                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden ml-7">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
