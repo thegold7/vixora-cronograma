@@ -230,7 +230,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
         <div className="font-bold truncate" style={{ color: colorHex?.text }}>
           {entrada.actividad}
         </div>
-        {/* FIX: No mostrar "—" si no hay OTs o detalle */}
         {mostrarDetalles && entrada.ots_asignadas && entrada.ots_asignadas !== "—" && (
           <div className="mt-0.5 space-y-0.5">
             {entrada.ots_asignadas.split(",").map((cod, i) => {
@@ -252,7 +251,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
               return (
                 <div key={i} className="text-gray-700">
                   <div className="font-medium">{c}:</div>
-                  {detalleOt && (
+                  {/* FIX: No mostrar "—" si no hay detalle */}
+                  {detalleOt && detalleOt !== "—" && (
                     <div className="text-gray-500 text-[9px] leading-tight pl-1 truncate">{detalleOt}</div>
                   )}
                   {!detalleOt && ot && (
@@ -295,11 +295,12 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     width: anchoColFija + dias.length * anchoColDia,
   };
 
+  // FIX: Cambiar morado a #E91E63 para el día actual
   const thStyle = (inRango: boolean, isToday: boolean): React.CSSProperties => ({
     position: "sticky",
     top: 0,
     zIndex: 3,
-    backgroundColor: inRango ? "#E91E63" : isToday ? "#7c3aed" : "#1d1d1f",
+    backgroundColor: inRango ? "#E91E63" : isToday ? "#E91E63" : "#1d1d1f",
     color: "white",
     width: anchoColDia,
     minWidth: anchoColDia,
@@ -342,14 +343,14 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     boxSizing: "border-box",
   });
 
+  // FIX: Remover el tinte de fondo (morado/lila) en el cuerpo de la celda
   const getCellBg = (
     entrada: EntradaCronograma | undefined,
     isWeekend: boolean,
     inRango: boolean,
     inDragRange: boolean,
     isDragHover: boolean,
-    tecnico: Tecnico,
-    isToday: boolean
+    tecnico: Tecnico
   ) => {
     if (inRango || isDragHover) return "#fce4ec";
     if (inDragRange) return "#f8bbd0";
@@ -357,7 +358,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
       const colorHex = getColorHex(actividades, entrada.actividad);
       if (colorHex) return colorHex.soft;
     }
-    if (isToday) return "#faf5ff";
     if (isWeekend) return "#f9fafb";
     return "#ffffff";
   };
@@ -545,7 +545,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                   const colorHex = entrada ? getColorHex(actividades, entrada.actividad) : null;
                   const isToday = iso === hoyIso;
 
-                  const cellBg = getCellBg(entrada, isWeekend, inRango, inDragRange, isDragHover, t, isToday);
+                  const cellBg = getCellBg(entrada, isWeekend, inRango, inDragRange, isDragHover, t);
                   const cellOpacity = getCellOpacity(entrada, t);
 
                   return (
@@ -567,7 +567,7 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                         borderRight: "1px solid #e5e7eb",
                         borderBottom: "1px solid #e5e7eb",
                         borderLeft: esPrimeroDeMes ? "2px solid #E91E63" : colorHex && entrada ? `3px solid ${colorHex.border}` : undefined,
-                        boxShadow: inRango || isDragHover ? "inset 0 0 0 2px #E91E63" : isToday ? "inset 0 0 0 1px #7c3aed" : undefined,
+                        boxShadow: inRango || isDragHover ? "inset 0 0 0 2px #E91E63" : undefined,
                         boxSizing: "border-box",
                         verticalAlign: "top",
                         cursor: modoAcceso === "editor" ? "pointer" : "default",
