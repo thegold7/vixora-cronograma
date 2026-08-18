@@ -313,20 +313,23 @@ export function MapaMinas() {
     return viajes.sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
   };
 
-  // FIX: Función rápida para contar técnicos en una sede para la lista del sidebar
+   // FIX: Función rápida para contar técnicos en una sede para la lista del sidebar
   const contarTecnicosEnSede = (mina: MinaAgrupada): number => {
-    let count = 0;
     const codigosOtDeSede = new Set(mina.ots.map(o => o.codigo));
+    const tecnicosUnicos = new Set<string>();
+    
     for (const e of Object.values(cronograma)) {
       if (e.fecha < fechaInicio || e.fecha > fechaFin) continue;
-      if (!actividadesRojas.has(e.actividad)) continue;
+      // Quitamos el filtro de actividadesRojas para contar cualquier técnico asignado a la sede
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
         if (codigos.some(c => codigosOtDeSede.has(c))) {
-          count++;
+          tecnicosUnicos.add(e.tecnico_id);
         }
       }
     }
+    return tecnicosUnicos.size;
+  };
     // Eliminar duplicados de técnico (un técnico cuenta como 1 aunque tenga varias OTs ese día)
     const tecnicosUnicos = new Set<string>();
     for (const e of Object.values(cronograma)) {
