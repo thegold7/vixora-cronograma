@@ -16,16 +16,43 @@ interface Props {
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
+// FIX: Actividades que NO cuentan como disponibles
+const ACTIVIDADES_NO_DISPONIBLES = [
+  "DESCANSO PROY.", "DESCANSO MC", "DESCANSO ANT", "DESC.MÉDICO",
+  "FIN DE SEMANA", "FERIADO", "VACACIONES", "PERMISO", "CURSOS",
+  "MOVILIZACIÓN", "PROYECTO ANT", "PROYECTO MC", "SERV. LIMA", "SERV. PROYECTO", "SERV. PROVINCIA"
+];
+
+function esNoDisponible(actividad: string): boolean {
+  const upper = actividad.toUpperCase();
+  return ACTIVIDADES_NO_DISPONIBLES.some(d => upper.includes(d));
+}
+
+interface ViajeAgrupado {
+  tecnico: string;
+  sede: string;
+  ot: string;
+  actividad: string;
+  fechaInicio: string;
+  fechaFin: string;
+  dias: number;
+}
+
 export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) {
   const { cargarDatos, showToast } = useStore();
   const [hoy] = useState(() => new Date());
-  const [inputInicio, setInputInicio] = useState<string>("");
-  const [inputFin, setInputFin] = useState<string>("");
-  const [rangoAplicado, setRangoAplicado] = useState<{ inicio: string; fin: string }>({ inicio: "", fin: "" });
+  
+  // FIX: Por defecto cargar todo el año 2026
+  const [inputInicio, setInputInicio] = useState<string>(`${hoy.getFullYear()}-01-01`);
+  const [inputFin, setInputFin] = useState<string>(`${hoy.getFullYear()}-12-31`);
+  const [rangoAplicado, setRangoAplicado] = useState<{ inicio: string; fin: string }>({
+    inicio: `${hoy.getFullYear()}-01-01`,
+    fin: `${hoy.getFullYear()}-12-31`
+  });
   const [actualizando, setActualizando] = useState(false);
   const [vistaSecundaria, setVistaSecundaria] = useState<"porTecnico" | "porActividad" | "porDia">("porTecnico");
   const [queryHistorico, setQueryHistorico] = useState("");
-  const [filtroTecnico, setFiltroTecnico] = useState<string>(""); // "" significa todos
+  const [filtroTecnico, setFiltroTecnico] = useState<string>("");
 
   const handleActualizar = async () => {
     setActualizando(true);
@@ -35,9 +62,9 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
 
   const handleAplicarRango = () => setRangoAplicado({ inicio: inputInicio, fin: inputFin });
   const handleLimpiarRango = () => {
-    setInputInicio("");
-    setInputFin("");
-    setRangoAplicado({ inicio: "", fin: "" });
+    setInputInicio(`${hoy.getFullYear()}-01-01`);
+    setInputFin(`${hoy.getFullYear()}-12-31`);
+    setRangoAplicado({ inicio: `${hoy.getFullYear()}-01-01`, fin: `${hoy.getFullYear()}-12-31` });
   };
 
   const stats = useMemo(() => {
@@ -63,7 +90,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       diasPeriodo = new Date(year, month + 1, 0).getDate();
     }
 
-    // FIX: Filtrar por técnico si está seleccionado
     if (filtroTecnico) {
       entries = entries.filter(e => e.tecnico_id === filtroTecnico);
     }
@@ -77,22 +103,35 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     const porTecnico: Record<string, number> = {};
     for (const e of entries) porTecnico[e.tecnico_id] = (porTecnico[e.tecnico_id] ?? 0) + 1;
 
-    // FIX: Calcular carga basándose en el técnico seleccionado o en todos
     const totalTecnicosParaCarga = filtroTecnico ? 1 : total;
     const cargaMax = totalTecnicosParaCarga * diasPeriodo;
     const cargaActual = entries.length;
     const cargaPct = cargaMax > 0 ? Math.round((cargaActual / cargaMax) * 100) : 0;
     const sobrecarga = activos.filter((t) => (porTecnico[t.id] ?? 0) > 22);
 
+    // FIX: Contar disponibles correctamente (solo OFICINA o BACKLOG)
     let enProyecto = 0, enOficina = 0, disponibles = 0;
     const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
     for (const t of activos) {
       if (filtroTecnico && t.id !== filtroTecnico) continue;
       const entry = cronograma[`${t.id}|${hoyIso}`];
-      if (!entry) disponibles++;
-      else if (entry.actividad.includes("PROYECTO") || entry.actividad.includes("SERV.")) enProyecto++;
-      else if (entry.actividad === "OFICINA") enOficina++;
-      else disponibles++;
+      if (!entry) {
+        disponibles++;
+      } else if (entry.actividad.includes("PROYECTO") || entry.actividad.includes("SERV.")) {
+        enProyecto++;
+      } else if (esNoDisponible(entry.actividad)) {
+        // No disponible (descanso, movilización, etc.) - no cuenta en ningún lado
+      } else if (entry.actividad === "OFICINA") {
+        enOficina++;
+      } else {
+        // Backlog u otras actividades verde/amarillo = disponible
+        const act = actividades.find(a => a.nombre === entry.actividad);
+        if (act && (act.color === "verde" || act.color === "amarillo")) {
+          disponibles++;
+        } else {
+          disponibles++;
+        }
+      }
     }
 
     const otCount: Record<string, number> = {};
@@ -115,7 +154,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
 
     const statsPorTecnicoLista = activos.map((t) => ({ tecnico: t, count: porTecnico[t.id] ?? 0 })).sort((a, b) => b.count - a.count);
 
-    // Heatmap data (Ignora filtro de técnico para mostrar el panorama general)
+    // Heatmap data
     let heatmapEntries = Object.values(cronograma);
     if (rangoAplicado.inicio && rangoAplicado.fin) {
       heatmapEntries = heatmapEntries.filter((e) => e.fecha >= rangoAplicado.inicio && e.fecha <= rangoAplicado.fin);
@@ -137,12 +176,14 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     };
   }, [tecnicos, cronograma, actividades, ots, hoy, rangoAplicado, filtroTecnico]);
 
-  // Histórico de Viajes
+  // FIX: Histórico de Viajes agrupado por técnico + sede + OT + actividad
   const historicoViajes = useMemo(() => {
-    const viajes: { tecnico: string; sede: string; ot: string; fecha: string; actividad: string }[] = [];
     const otMap: Record<string, OT> = {};
     for (const o of ots) otMap[o.codigo] = o;
 
+    // Recolectar todas las entradas con OT asignada
+    const registros: { tecnico_id: string; tecnico: string; sede: string; ot: string; actividad: string; fecha: string }[] = [];
+    
     for (const e of stats.entries) {
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
@@ -150,18 +191,79 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           const ot = otMap[cod];
           const tec = tecnicos.find(t => t.id === e.tecnico_id);
           if (ot && tec) {
-            viajes.push({
+            registros.push({
+              tecnico_id: tec.id,
               tecnico: tec.nombre,
               sede: ot.sede || "—",
               ot: cod,
-              fecha: e.fecha,
-              actividad: e.actividad
+              actividad: e.actividad,
+              fecha: e.fecha
             });
           }
         }
       }
     }
-    return viajes.sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+    // Agrupar por técnico + sede + OT + actividad
+    const gruposMap: Record<string, { tecnico: string; sede: string; ot: string; actividad: string; fechas: string[] }> = {};
+    
+    for (const r of registros) {
+      const key = `${r.tecnico_id}|${r.sede}|${r.ot}|${r.actividad}`;
+      if (!gruposMap[key]) {
+        gruposMap[key] = {
+          tecnico: r.tecnico,
+          sede: r.sede,
+          ot: r.ot,
+          actividad: r.actividad,
+          fechas: []
+        };
+      }
+      gruposMap[key].fechas.push(r.fecha);
+    }
+
+    // Convertir a array y ordenar fechas
+    const viajes: ViajeAgrupado[] = Object.values(gruposMap).map(g => {
+      g.fechas.sort();
+      
+      // Encontrar rangos consecutivos (días seguidos)
+      const rangos: { inicio: string; fin: string }[] = [];
+      let rangoActual = { inicio: g.fechas[0], fin: g.fechas[0] };
+      
+      for (let i = 1; i < g.fechas.length; i++) {
+        const prev = new Date(g.fechas[i - 1] + "T00:00:00");
+        const curr = new Date(g.fechas[i] + "T00:00:00");
+        const diff = (curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
+        
+        if (diff === 1) {
+          // Día consecutivo, extender rango
+          rangoActual.fin = g.fechas[i];
+        } else {
+          // Salto, cerrar rango y abrir nuevo
+          rangos.push(rangoActual);
+          rangoActual = { inicio: g.fechas[i], fin: g.fechas[i] };
+        }
+      }
+      rangos.push(rangoActual);
+      
+      // Si hay un solo rango, devolver como un viaje
+      // Si hay múltiples rangos, devolver el primero (más relevante)
+      // En realidad, devolvemos todos los rangos como viajes separados
+      return rangos.map(r => ({
+        tecnico: g.tecnico,
+        sede: g.sede,
+        ot: g.ot,
+        actividad: g.actividad,
+        fechaInicio: r.inicio,
+        fechaFin: r.fin,
+        dias: Math.round((new Date(r.fin).getTime() - new Date(r.inicio).getTime()) / (1000 * 60 * 60 * 24)) + 1
+      }));
+    }).flat();
+    
+    // Ordenar por técnico y luego por fecha de inicio (más reciente primero)
+    return viajes.sort((a, b) => {
+      if (a.tecnico !== b.tecnico) return a.tecnico.localeCompare(b.tecnico);
+      return b.fechaInicio.localeCompare(a.fechaInicio);
+    });
   }, [stats.entries, ots, tecnicos]);
 
   const historicoFiltrado = useMemo(() => {
@@ -174,7 +276,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     );
   }, [historicoViajes, queryHistorico]);
 
-  // FIX: Nueva métrica disruptiva - Top 5 Sedes Más Visitadas
   const topSedes = useMemo(() => {
     const sedeCount: Record<string, number> = {};
     const otMap: Record<string, OT> = {};
@@ -198,8 +299,16 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
   }, [stats.entries, ots]);
 
   const handleExportarExcel = () => {
-    const headers = ["Técnico", "Sede", "OT", "Fecha", "Actividad"];
-    const rows = historicoFiltrado.map(v => [v.tecnico, v.sede, v.ot, v.fecha, v.actividad]);
+    const headers = ["Técnico", "Fecha Inicio", "Fecha Fin", "Días", "Sede", "OT", "Actividad"];
+    const rows = historicoFiltrado.map(v => [
+      v.tecnico,
+      v.fechaInicio.split("-").reverse().join("/"),
+      v.fechaFin.split("-").reverse().join("/"),
+      v.dias,
+      v.sede,
+      v.ot,
+      v.actividad
+    ]);
     
     const csvContent = [
       headers.join(","),
@@ -251,6 +360,8 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     verde: "Backlog",
   };
 
+  const fmtFechaCorta = (iso: string) => iso.split("-").reverse().join("/");
+
   return (
     <div className="p-6 max-w-7xl mx-auto overflow-y-auto h-full">
       <div className="mb-6 flex items-center justify-between flex-wrap gap-2">
@@ -274,7 +385,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </button>
         {rangoAplicado.inicio && <button onClick={handleLimpiarRango} className="text-xs text-gray-500 hover:text-red-500">✕ Limpiar</button>}
         
-        {/* FIX: Filtro por Técnico */}
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-700">Técnico:</span>
           <select 
@@ -290,7 +400,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* KPIs Principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KpiCard icon={<Users size={20} />} label="Personal Total" value={stats.total} sub="técnicos activos" color="#1d1d1f" />
         <KpiCard icon={<Briefcase size={20} />} label="En Proyecto" value={stats.enProyecto} sub={`hoy · ${donaPct(stats.enProyecto)}%`} color="#b3261e" />
@@ -298,7 +407,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         <KpiCard icon={<TrendingUp size={20} />} label="Asignaciones" value={stats.totalEntries} sub="en el período" color="#E91E63" />
       </div>
 
-      {/* Gráficos Circulares */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col items-center">
           <h3 className="text-sm font-bold text-gray-700 mb-3">% Carga Laboral</h3>
@@ -316,7 +424,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
               <span className="text-[10px] text-gray-500">ocupación</span>
             </div>
           </div>
-          {/* FIX: Leyenda explicativa */}
           <div className="mt-2 text-[9px] text-gray-400 text-center italic">
             Calculado: Asignaciones / (Técnicos × Días)
           </div>
@@ -341,7 +448,8 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400"></span>Disp: {stats.disponibles}</span>
           </div>
           <div className="mt-2 text-[9px] text-gray-400 text-center italic">
-            Distribución del personal en el día de hoy
+            {/* FIX: Leyenda actualizada */}
+            Disp = Oficina + Backlog (no incluye descansos)
           </div>
         </div>
 
@@ -371,7 +479,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* Heatmap + Top OTs (Lado a Lado para compactar) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-lg p-4 overflow-x-auto">
           <h3 className="text-sm font-bold text-gray-700 mb-3">Heatmap de Actividad {stats.yearActual}</h3>
@@ -445,7 +552,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* Estadísticas Detalladas y Nueva Métrica Disruptiva */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -530,7 +636,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
           )}
         </div>
         
-        {/* FIX: Métrica Disruptiva - Top 5 Sedes Más Visitadas */}
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <MapPin size={16} className="text-[#E91E63]" />
@@ -572,7 +677,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* HISTÓRICO DE VIAJES */}
+      {/* FIX: Histórico de Viajes con formato limpio agrupado */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -604,27 +709,42 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         {historicoFiltrado.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-4">No hay viajes registrados en el período seleccionado.</p>
         ) : (
-          <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
             <table className="w-full text-xs">
-              <thead className="bg-gray-50 sticky top-0">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Fecha</th>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Técnico</th>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Sede</th>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">OT</th>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Actividad</th>
+                  <th className="px-4 py-2 text-left font-semibold text-gray-600 border-b border-gray-200">Técnico</th>
+                  <th className="px-4 py-2 text-left font-semibold text-gray-600 border-b border-gray-200">Fecha</th>
+                  <th className="px-4 py-2 text-left font-semibold text-gray-600 border-b border-gray-200">Sede</th>
+                  <th className="px-4 py-2 text-left font-semibold text-gray-600 border-b border-gray-200">OT</th>
+                  <th className="px-4 py-2 text-left font-semibold text-gray-600 border-b border-gray-200">Actividad</th>
                 </tr>
               </thead>
               <tbody>
-                {historicoFiltrado.map((v, i) => (
-                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="px-3 py-2 text-gray-600 font-mono">{v.fecha.split("-").reverse().join("/")}</td>
-                    <td className="px-3 py-2 text-gray-900 font-medium">{v.tecnico}</td>
-                    <td className="px-3 py-2 text-gray-600">{v.sede}</td>
-                    <td className="px-3 py-2 text-gray-600 font-mono">{v.ot}</td>
-                    <td className="px-3 py-2 text-gray-600">{v.actividad}</td>
-                  </tr>
-                ))}
+                {historicoFiltrado.map((v, i) => {
+                  // Detectar si el técnico cambia para poner un separador
+                  const prev = historicoFiltrado[i - 1];
+                  const cambioTecnico = !prev || prev.tecnico !== v.tecnico;
+                  
+                  return (
+                    <tr key={i} className={`${cambioTecnico ? "border-t-2 border-gray-200" : "border-b border-gray-100"} hover:bg-gray-50`}>
+                      <td className="px-4 py-2.5 text-gray-900 font-medium">
+                        {cambioTecnico && <span className="text-[8px] text-[#E91E63] font-bold uppercase block">●</span>}
+                        {v.tecnico}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-600 font-mono">
+                        {v.fechaInicio === v.fechaFin 
+                          ? fmtFechaCorta(v.fechaInicio)
+                          : `${fmtFechaCorta(v.fechaInicio)} al ${fmtFechaCorta(v.fechaFin)}`
+                        }
+                        <span className="text-[9px] text-gray-400 ml-1">({v.dias}d)</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-900 font-medium">{v.sede}</td>
+                      <td className="px-4 py-2.5 text-gray-600 font-mono">{v.ot}</td>
+                      <td className="px-4 py-2.5 text-gray-600">{v.actividad}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
