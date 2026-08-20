@@ -230,11 +230,16 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
         <div className="font-bold truncate" style={{ color: colorHex?.text }}>
           {entrada.actividad}
         </div>
+        {/* FIX: No mostrar "—" si no hay OTs o detalle */}
         {mostrarDetalles && entrada.ots_asignadas && entrada.ots_asignadas !== "—" && (
           <div className="mt-0.5 space-y-0.5">
             {entrada.ots_asignadas.split(",").map((cod, i) => {
               const c = cod.trim();
               const ot = otMap[c];
+              
+              // FIX: Formatear como "Sede-Codigo" (ej: "Chile-650201017")
+              const otDisplay = ot && ot.sede ? `${ot.sede}-${c}` : c;
+              
               let detalleOt = "";
               if (entrada.detalle && entrada.detalle !== "—") {
                 const lineas = entrada.detalle.split("\n");
@@ -250,8 +255,8 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
               }
               return (
                 <div key={i} className="text-gray-700">
-                  <div className="font-medium">{c}:</div>
-                  {/* FIX: No mostrar "—" si no hay detalle */}
+                  {/* FIX: Usar otDisplay en vez de c */}
+                  <div className="font-medium">{otDisplay}:</div>
                   {detalleOt && detalleOt !== "—" && (
                     <div className="text-gray-500 text-[9px] leading-tight pl-1 truncate">{detalleOt}</div>
                   )}
@@ -295,7 +300,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     width: anchoColFija + dias.length * anchoColDia,
   };
 
-  // FIX: Cambiar morado a #E91E63 para el día actual
   const thStyle = (inRango: boolean, isToday: boolean): React.CSSProperties => ({
     position: "sticky",
     top: 0,
@@ -343,7 +347,6 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
     boxSizing: "border-box",
   });
 
-  // FIX: Remover el tinte de fondo (morado/lila) en el cuerpo de la celda
   const getCellBg = (
     entrada: EntradaCronograma | undefined,
     isWeekend: boolean,
