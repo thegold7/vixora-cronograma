@@ -257,13 +257,9 @@ export function Calendario({ tecnicos, actividades, cronograma, ots, modoAcceso 
                 <div key={i} className="text-gray-700">
                   {/* FIX: Usar otDisplay en vez de c */}
                   <div className="font-medium">{otDisplay}:</div>
+                  {/* FIX: No mostrar nada si no hay detalle, ni mostrar el fallback de cliente/sede */}
                   {detalleOt && detalleOt !== "—" && (
                     <div className="text-gray-500 text-[9px] leading-tight pl-1 truncate">{detalleOt}</div>
-                  )}
-                  {!detalleOt && ot && (
-                    <div className="text-gray-400 text-[9px] leading-tight pl-1 truncate">
-                      {ot.cliente}{ot.sede ? " · " + ot.sede : ""}
-                    </div>
                   )}
                 </div>
               );
