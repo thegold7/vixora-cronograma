@@ -16,12 +16,17 @@ interface Props {
 const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
-// FIX: Actividades que NO cuentan como disponibles
 const ACTIVIDADES_NO_DISPONIBLES = [
   "DESCANSO PROY.", "DESCANSO MC", "DESCANSO ANT", "DESC.MÉDICO",
   "FIN DE SEMANA", "FERIADO", "VACACIONES", "PERMISO", "CURSOS",
   "MOVILIZACIÓN", "PROYECTO ANT", "PROYECTO MC", "SERV. LIMA", "SERV. PROYECTO", "SERV. PROVINCIA"
 ];
+
+// FIX: Mapeo de actividades a sedes (para entradas sin OT)
+const ACTIVIDAD_SEDE_MAP: Record<string, string> = {
+  "PROYECTO MC": "MARCOBRE",
+  "PROYECTO ANT": "ANTAPACCAY",
+};
 
 function esNoDisponible(actividad: string): boolean {
   const upper = actividad.toUpperCase();
@@ -42,7 +47,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
   const { cargarDatos, showToast } = useStore();
   const [hoy] = useState(() => new Date());
   
-  // FIX: Por defecto cargar todo el año 2026
   const [inputInicio, setInputInicio] = useState<string>(`${hoy.getFullYear()}-01-01`);
   const [inputFin, setInputFin] = useState<string>(`${hoy.getFullYear()}-12-31`);
   const [rangoAplicado, setRangoAplicado] = useState<{ inicio: string; fin: string }>({
@@ -53,6 +57,10 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
   const [vistaSecundaria, setVistaSecundaria] = useState<"porTecnico" | "porActividad" | "porDia">("porTecnico");
   const [queryHistorico, setQueryHistorico] = useState("");
   const [filtroTecnico, setFiltroTecnico] = useState<string>("");
+  
+  // FIX: Filtro de fechas para el histórico/export
+  const [histInicio, setHistInicio] = useState<string>(`${hoy.getFullYear()}-01-01`);
+  const [histFin, setHistFin] = useState<string>(`${hoy.getFullYear()}-12-31`);
 
   const handleActualizar = async () => {
     setActualizando(true);
@@ -109,7 +117,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     const cargaPct = cargaMax > 0 ? Math.round((cargaActual / cargaMax) * 100) : 0;
     const sobrecarga = activos.filter((t) => (porTecnico[t.id] ?? 0) > 22);
 
-    // FIX: Contar disponibles correctamente (solo OFICINA o BACKLOG)
     let enProyecto = 0, enOficina = 0, disponibles = 0;
     const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
     for (const t of activos) {
@@ -120,11 +127,10 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       } else if (entry.actividad.includes("PROYECTO") || entry.actividad.includes("SERV.")) {
         enProyecto++;
       } else if (esNoDisponible(entry.actividad)) {
-        // No disponible (descanso, movilización, etc.) - no cuenta en ningún lado
+        // No disponible
       } else if (entry.actividad === "OFICINA") {
         enOficina++;
       } else {
-        // Backlog u otras actividades verde/amarillo = disponible
         const act = actividades.find(a => a.nombre === entry.actividad);
         if (act && (act.color === "verde" || act.color === "amarillo")) {
           disponibles++;
@@ -154,7 +160,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
 
     const statsPorTecnicoLista = activos.map((t) => ({ tecnico: t, count: porTecnico[t.id] ?? 0 })).sort((a, b) => b.count - a.count);
 
-    // Heatmap data
     let heatmapEntries = Object.values(cronograma);
     if (rangoAplicado.inicio && rangoAplicado.fin) {
       heatmapEntries = heatmapEntries.filter((e) => e.fecha >= rangoAplicado.inicio && e.fecha <= rangoAplicado.fin);
@@ -176,31 +181,42 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     };
   }, [tecnicos, cronograma, actividades, ots, hoy, rangoAplicado, filtroTecnico]);
 
-  // FIX: Histórico de Viajes agrupado por técnico + sede + OT + actividad
+  // FIX: Histórico de Viajes - incluye TODOS los estados (no solo OTs)
   const historicoViajes = useMemo(() => {
     const otMap: Record<string, OT> = {};
     for (const o of ots) otMap[o.codigo] = o;
 
-    // Recolectar todas las entradas con OT asignada
     const registros: { tecnico_id: string; tecnico: string; sede: string; ot: string; actividad: string; fecha: string }[] = [];
     
     for (const e of stats.entries) {
+      const tec = tecnicos.find(t => t.id === e.tecnico_id);
+      if (!tec) continue;
+      
       if (e.ots_asignadas && e.ots_asignadas !== "—") {
+        // Tiene OTs asignadas - crear un registro por cada OT
         const codigos = e.ots_asignadas.split(",").map(s => s.trim());
         for (const cod of codigos) {
           const ot = otMap[cod];
-          const tec = tecnicos.find(t => t.id === e.tecnico_id);
-          if (ot && tec) {
-            registros.push({
-              tecnico_id: tec.id,
-              tecnico: tec.nombre,
-              sede: ot.sede || "—",
-              ot: cod,
-              actividad: e.actividad,
-              fecha: e.fecha
-            });
-          }
+          registros.push({
+            tecnico_id: tec.id,
+            tecnico: tec.nombre,
+            sede: ot?.sede || "—",
+            ot: cod,
+            actividad: e.actividad,
+            fecha: e.fecha
+          });
         }
+      } else {
+        // FIX: No tiene OTs - incluir igualmente (OFICINA, DESCANSO, BACKLOG, etc.)
+        const sedeFromActividad = ACTIVIDAD_SEDE_MAP[e.actividad.toUpperCase()] || "—";
+        registros.push({
+          tecnico_id: tec.id,
+          tecnico: tec.nombre,
+          sede: sedeFromActividad,
+          ot: "—",
+          actividad: e.actividad,
+          fecha: e.fecha
+        });
       }
     }
 
@@ -221,11 +237,10 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       gruposMap[key].fechas.push(r.fecha);
     }
 
-    // Convertir a array y ordenar fechas
+    // Convertir a array y encontrar rangos consecutivos
     const viajes: ViajeAgrupado[] = Object.values(gruposMap).map(g => {
       g.fechas.sort();
       
-      // Encontrar rangos consecutivos (días seguidos)
       const rangos: { inicio: string; fin: string }[] = [];
       let rangoActual = { inicio: g.fechas[0], fin: g.fechas[0] };
       
@@ -235,19 +250,14 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         const diff = (curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
         
         if (diff === 1) {
-          // Día consecutivo, extender rango
           rangoActual.fin = g.fechas[i];
         } else {
-          // Salto, cerrar rango y abrir nuevo
           rangos.push(rangoActual);
           rangoActual = { inicio: g.fechas[i], fin: g.fechas[i] };
         }
       }
       rangos.push(rangoActual);
       
-      // Si hay un solo rango, devolver como un viaje
-      // Si hay múltiples rangos, devolver el primero (más relevante)
-      // En realidad, devolvemos todos los rangos como viajes separados
       return rangos.map(r => ({
         tecnico: g.tecnico,
         sede: g.sede,
@@ -259,22 +269,34 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
       }));
     }).flat();
     
-    // Ordenar por técnico y luego por fecha de inicio (más reciente primero)
     return viajes.sort((a, b) => {
       if (a.tecnico !== b.tecnico) return a.tecnico.localeCompare(b.tecnico);
       return b.fechaInicio.localeCompare(a.fechaInicio);
     });
   }, [stats.entries, ots, tecnicos]);
 
+  // FIX: Filtrado por fechas + búsqueda
   const historicoFiltrado = useMemo(() => {
-    if (!queryHistorico) return historicoViajes;
-    const q = queryHistorico.toLowerCase();
-    return historicoViajes.filter(v => 
-      v.tecnico.toLowerCase().includes(q) || 
-      v.sede.toLowerCase().includes(q) || 
-      v.ot.toLowerCase().includes(q)
-    );
-  }, [historicoViajes, queryHistorico]);
+    let result = historicoViajes;
+    
+    // Filtrar por rango de fechas del histórico
+    if (histInicio && histFin) {
+      result = result.filter(v => v.fechaInicio >= histInicio && v.fechaInicio <= histFin);
+    }
+    
+    // Filtrar por búsqueda
+    if (queryHistorico) {
+      const q = queryHistorico.toLowerCase();
+      result = result.filter(v => 
+        v.tecnico.toLowerCase().includes(q) || 
+        v.sede.toLowerCase().includes(q) || 
+        v.ot.toLowerCase().includes(q) ||
+        v.actividad.toLowerCase().includes(q)
+      );
+    }
+    
+    return result;
+  }, [historicoViajes, queryHistorico, histInicio, histFin]);
 
   const topSedes = useMemo(() => {
     const sedeCount: Record<string, number> = {};
@@ -299,6 +321,11 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
   }, [stats.entries, ots]);
 
   const handleExportarExcel = () => {
+    if (historicoFiltrado.length === 0) {
+      showToast("No hay viajes para exportar en el rango seleccionado", "error");
+      return;
+    }
+
     const headers = ["Técnico", "Fecha Inicio", "Fecha Fin", "Días", "Sede", "OT", "Actividad"];
     const rows = historicoFiltrado.map(v => [
       v.tecnico,
@@ -319,13 +346,13 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `historico_viajes_${formatFechaISO(new Date())}.csv`;
+    link.download = `historico_viajes_${histInicio}_al_${histFin}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     
-    showToast("Histórico exportado a Excel/CSV", "ok");
+    showToast(`Exportados ${historicoFiltrado.length} registros`, "ok");
   };
 
   const donaPct = (n: number) => Math.round((n / (stats.total || 1)) * 100);
@@ -448,7 +475,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400"></span>Disp: {stats.disponibles}</span>
           </div>
           <div className="mt-2 text-[9px] text-gray-400 text-center italic">
-            {/* FIX: Leyenda actualizada */}
             Disp = Oficina + Backlog (no incluye descansos)
           </div>
         </div>
@@ -677,7 +703,7 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
         </div>
       </div>
 
-      {/* FIX: Histórico de Viajes con formato limpio agrupado */}
+      {/* HISTÓRICO DE VIAJES */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -686,14 +712,29 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
             <span className="text-[10px] text-gray-500">({historicoFiltrado.length} registros)</span>
           </div>
           <div className="flex gap-2 items-center">
-            <div className="relative">
+            {/* FIX: Filtro de fechas para exportar */}
+            <span className="text-[10px] font-semibold text-gray-600">Filtrar:</span>
+            <input 
+              type="date" 
+              value={histInicio} 
+              onChange={(e) => setHistInicio(e.target.value)} 
+              className="px-2 py-1 text-[10px] border border-gray-200 rounded"
+            />
+            <span className="text-gray-400 text-[10px]">→</span>
+            <input 
+              type="date" 
+              value={histFin} 
+              onChange={(e) => setHistFin(e.target.value)} 
+              className="px-2 py-1 text-[10px] border border-gray-200 rounded"
+            />
+            <div className="relative ml-2">
               <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 value={queryHistorico}
                 onChange={(e) => setQueryHistorico(e.target.value)}
-                placeholder="Buscar técnico, sede u OT..."
-                className="pl-7 pr-2 py-1 text-xs border border-gray-200 rounded w-64"
+                placeholder="Buscar..."
+                className="pl-7 pr-2 py-1 text-xs border border-gray-200 rounded w-40"
               />
             </div>
             <button
@@ -701,13 +742,13 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
               disabled={historicoFiltrado.length === 0}
               className="flex items-center gap-1 px-3 py-1 text-xs text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50"
             >
-              <Download size={12} /> Exportar Excel
+              <Download size={12} /> Exportar
             </button>
           </div>
         </div>
 
         {historicoFiltrado.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-4">No hay viajes registrados en el período seleccionado.</p>
+          <p className="text-xs text-gray-400 text-center py-4">No hay registros en el rango seleccionado.</p>
         ) : (
           <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
             <table className="w-full text-xs">
@@ -722,7 +763,6 @@ export function Estadisticas({ tecnicos, actividades, cronograma, ots }: Props) 
               </thead>
               <tbody>
                 {historicoFiltrado.map((v, i) => {
-                  // Detectar si el técnico cambia para poner un separador
                   const prev = historicoFiltrado[i - 1];
                   const cambioTecnico = !prev || prev.tecnico !== v.tecnico;
                   
